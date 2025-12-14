@@ -1,51 +1,21 @@
-from flask import Flask, request, jsonify
-from flask_cors import CORS
-import pyppeteer
-import asyncio
+import sys
+import requests
+from bs4 import BeautifulSoup
+import json
 
-app = Flask(__name__)
-# IMPORTANT: This allows your React app on Hostinger to call this API
-CORS(app) 
+url = sys.argv[1] if len(sys.argv) > 1 else "https://example.com"
 
-async def run_accessibility_check(url):
-    """Launches a browser, goes to URL, and returns a mock analysis."""
-    browser = await pyppeteer.launch(headless=True, args=['--no-sandbox', '--disable-setuid-sandbox'])
-    page = await browser.newPage()
-    try:
-        await page.goto(url, {'waitUntil': 'networkidle2', 'timeout': 30000})
-        # For this example, we'll just get the page title.
-        # In a real app, you would inject axe-core here.
-        title = await page.title()
-        results = {
-            "status": "success",
-            "url": url,
-            "title": title,
-            "issues": [
-                {"id": "mock-1", "description": "This is a mock issue for demonstration.", "type": "alert"}
-            ]
-        }
-        return results
-    except Exception as e:
-        return {"status": "error", "message": str(e)}
-    finally:
-        await browser.close()
+html = requests.get(url).text
+soup = BeautifulSoup(html, "html.parser")
 
-@app.route('/check', methods=['POST'])
-def check():
-    data = request.get_json()
-    if not data or not data.get('url'):
-        return jsonify({"error": "URL is required"}), 400
+images = soup.find_all("img")
+missing_alt = [img.get("src") for img in images if not img.get("alt")]
 
-    url_to_check = data['url']
-    
-    # Run the async function
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    results = loop.run_until_complete(run_accessibility_check(url_to_check))
-    
-    return jsonify(results)
+result = {
+    "url": url,
+    "total_images": len(images),
+    "missing_alt": len(missing_alt),
+    "accessibility_score": max(0, 100 - len(missing_alt)*5)
+}
 
-if __name__ == '__main__':
-    # The app.run() is for local testing.
-    # Cloud Run will use Gunicorn to run this.
-    app.run(port=8080, host='0.0.0.0')
+print(json.dumps(result))
