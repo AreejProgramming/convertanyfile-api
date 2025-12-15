@@ -1,4 +1,4 @@
-# .github/workflows/analyze.yml
+# .github/workflows/main.yml
 name: Run Accessibility Analysis
 
 on:
