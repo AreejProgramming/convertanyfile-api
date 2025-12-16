@@ -45,8 +45,12 @@ jobs:
           echo "Domain: $TARGET_DOMAIN" >> session_marker_${SESSION_ID}.txt
           echo "Timestamp: $(date +%s)" >> session_marker_${SESSION_ID}.txt
           
-          # Run the Python script and capture output
+          # Run the Python script and capture both stdout and stderr
           python runner/domain_age_checker.py > script_output.txt 2>&1 || true
+          
+          # Display the output for debugging
+          echo "=== Script Output ==="
+          cat script_output.txt
           
           # Try to find the results in the script output
           if grep -q "results=" script_output.txt; then
@@ -58,9 +62,7 @@ jobs:
             echo '{"status": "error", "message": "No results found in script output"}' > "$OUTPUT_FILE"
           fi
           
-          # Display the output for debugging
-          echo "=== Script Output ==="
-          cat script_output.txt
+          # Display the extracted results for debugging
           echo "=== Extracted Results ==="
           cat "$OUTPUT_FILE"
           
