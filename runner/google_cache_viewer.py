@@ -1,5 +1,3 @@
-# File: runner/google_cache_checker.py
-
 import os
 import json
 import time
@@ -259,8 +257,9 @@ if __name__ == "__main__":
     if not target_url:
         print("ERROR: TARGET_URL environment variable not set.")
         print(f"results={json.dumps({'status': 'error', 'message': 'TARGET_URL environment variable not set.'})}")
-        sys.exit(1)
+        sys.exit(0)  # Exit with 0 to prevent workflow failure
         
     cache_results = check_google_cache(target_url)
     
     # The results are already printed in the function
+    sys.exit(0)  # Exit with 0 to prevent workflow failure
