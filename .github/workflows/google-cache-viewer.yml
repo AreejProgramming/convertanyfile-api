@@ -29,14 +29,12 @@ jobs:
           python -m pip install --upgrade pip
           pip install requests beautifulsoup4 lxml
 
-      - name: Create session marker first
+      - name: Create session marker
         run: |
-          # Create a session marker file for easier tracking
-          echo "Session ID: ${{ github.event.inputs.session_id }}" > session_marker_${{ github.event.inputs.session_id }}.txt
-          echo "URL: ${{ github.event.inputs.url }}" >> session_marker_${{ github.event.inputs.session_id }}.txt
-          echo "Timestamp: $(date +%s)" >> session_marker_${{ github.event.inputs.session_id }}.txt
-          echo "Workflow Run ID: ${{ github.run_id }}" >> session_marker_${{ github.event.inputs.session_id }}.txt
-          echo "Created session marker file for session ${{ github.event.inputs.session_id }}"
+          echo "Session ID: ${{ github.event.inputs.session_id }}" > session_marker.txt
+          echo "URL: ${{ github.event.inputs.url }}" >> session_marker.txt
+          echo "Timestamp: $(date +%s)" >> session_marker.txt
+          echo "Workflow Run ID: ${{ github.run_id }}" >> session_marker.txt
 
       - name: Run Google Cache Analysis
         id: run_analysis
@@ -44,29 +42,21 @@ jobs:
           TARGET_URL: ${{ github.event.inputs.url }}
           SESSION_ID: ${{ github.event.inputs.session_id }}
         run: |
-          # Create a temporary file for output with session ID
-          OUTPUT_FILE="google_cache_results_${SESSION_ID}.json"
+          OUTPUT_FILE="google_cache_results.json"
           
-          # Run the Python script and capture both stdout and stderr
           python runner/google_cache_checker.py > script_output.txt 2>&1
           SCRIPT_EXIT_CODE=$?
           
-          # Display the output for debugging
           echo "=== Script Output ==="
           cat script_output.txt
           echo "=== Script Exit Code: $SCRIPT_EXIT_CODE ==="
           
-          # Try to find the results in the script output
           if grep -q "results=" script_output.txt; then
-            # Extract the JSON results
             grep "results=" script_output.txt | sed 's/results=//' > "$OUTPUT_FILE"
             echo "Results extracted to $OUTPUT_FILE"
-            
-            # Display the extracted results for debugging
             echo "=== Extracted Results ==="
             cat "$OUTPUT_FILE"
           else
-            # If no results found, create an error response with script output
             ERROR_MESSAGE="No results found in script output"
             if [ -s script_output.txt ]; then
               ERROR_MESSAGE="$ERROR_MESSAGE. Script output: $(cat script_output.txt | head -c 200)"
@@ -76,7 +66,6 @@ jobs:
             echo "Created error response: $ERROR_MESSAGE"
           fi
           
-          # Save the file path for the next step
           echo "output_file=$OUTPUT_FILE" >> $GITHUB_OUTPUT
 
       - name: Upload Results as Artifact
@@ -90,5 +79,5 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: session-marker-${{ github.event.inputs.session_id }}
-          path: session_marker_${{ github.event.inputs.session_id }}.txt
+          path: session_marker.txt
           retention-days: 1
