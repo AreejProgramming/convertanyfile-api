@@ -19,7 +19,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4  # Updated to v4
+        uses: actions/checkout@v4
 
       - name: Set up Python
         uses: actions/setup-python@v4
@@ -68,7 +68,7 @@ jobs:
           echo "output_file=$OUTPUT_FILE" >> $GITHUB_OUTPUT
 
       - name: Upload Results as Artifact
-        uses: actions/upload-artifact@v4  # Updated to v4
+        uses: actions/upload-artifact@v4
         with:
           name: cors-results-${{ github.event.inputs.session_id }}
           path: ${{ steps.run_analysis.outputs.output_file }}
