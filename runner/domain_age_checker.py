@@ -86,8 +86,14 @@ def check_domain_age(domain):
                     except ValueError:
                         raise ValueError(f"Could not parse creation date: {creation_date}")
         
-        # Calculate domain age
+        # Make both datetimes timezone-naive to avoid subtraction issues
         now = datetime.now()
+        if now.tzinfo is not None:
+            now = now.replace(tzinfo=None)
+        if creation_date.tzinfo is not None:
+            creation_date = creation_date.replace(tzinfo=None)
+        
+        # Calculate domain age
         age_delta = now - creation_date
         
         days = age_delta.days
