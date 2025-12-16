@@ -44,25 +44,33 @@ jobs:
           echo "Timestamp: $(date +%s)" >> session_marker_${SESSION_ID}.txt
           
           # Run the Python script and capture both stdout and stderr
-          python runner/google_cache_checker.py > script_output.txt 2>&1 || true
+          python runner/google_cache_checker.py > script_output.txt 2>&1
+          SCRIPT_EXIT_CODE=$?
           
           # Display the output for debugging
           echo "=== Script Output ==="
           cat script_output.txt
+          echo "=== Script Exit Code: $SCRIPT_EXIT_CODE ==="
           
           # Try to find the results in the script output
           if grep -q "results=" script_output.txt; then
             # Extract the JSON results
             grep "results=" script_output.txt | sed 's/results=//' > "$OUTPUT_FILE"
             echo "Results extracted to $OUTPUT_FILE"
+            
+            # Display the extracted results for debugging
+            echo "=== Extracted Results ==="
+            cat "$OUTPUT_FILE"
           else
-            # If no results found, create an error response
-            echo '{"status": "error", "message": "No results found in script output"}' > "$OUTPUT_FILE"
+            # If no results found, create an error response with script output
+            ERROR_MESSAGE="No results found in script output"
+            if [ -s script_output.txt ]; then
+              ERROR_MESSAGE="$ERROR_MESSAGE. Script output: $(cat script_output.txt | head -c 200)"
+            fi
+            
+            echo '{"status": "error", "message": "'"$ERROR_MESSAGE"'"}' > "$OUTPUT_FILE"
+            echo "Created error response: $ERROR_MESSAGE"
           fi
-          
-          # Display the extracted results for debugging
-          echo "=== Extracted Results ==="
-          cat "$OUTPUT_FILE"
           
           # Save the file path for the next step
           echo "output_file=$OUTPUT_FILE" >> $GITHUB_OUTPUT
