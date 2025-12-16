@@ -9,7 +9,6 @@ import requests
 from urllib.parse import urljoin, urlparse
 from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeoutError
 
-# Add this function to generate a unique session ID
 def generate_session_id():
     return str(uuid.uuid4())
 
@@ -49,11 +48,15 @@ def run_broken_link_check(url):
     Launches a browser, extracts all links, and checks their status.
     Includes robust error handling and logging.
     """
-    # Generate a unique session ID for this analysis
-    session_id = generate_session_id()
+    # Get session ID from environment variable
+    session_id = os.environ.get("SESSION_ID", generate_session_id())
     
     print(f"Starting broken link check for URL: {url}") # Log for debugging
     print(f"Session ID: {session_id}")
+    
+    # Create a marker file with session ID for easier tracking
+    with open(f"session_marker_{session_id}.txt", "w") as f:
+        f.write(f"Session ID: {session_id}\nURL: {url}\nTimestamp: {time.time()}")
     
     results = {
         "status": "error", 
