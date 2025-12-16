@@ -1,4 +1,4 @@
-# File: runner/domain_age_checker.py
+# File: runner/domain_expiry_checker.py
 
 import os
 import json
@@ -41,9 +41,9 @@ def get_first_date(date_field):
     # If it's already a datetime or string, return it as is
     return date_field
 
-def check_domain_age(domain):
+def check_domain_expiry(domain):
     """
-    Checks the age of a domain by querying WHOIS data.
+    Checks the expiry date of a domain by querying WHOIS data.
     Returns detailed information about the domain registration.
     """
     # Get session ID from environment variable
@@ -52,12 +52,12 @@ def check_domain_age(domain):
     # Clean up the domain input
     domain = extract_domain_from_url(domain)
     
-    print(f"Starting domain age check for: {domain}")
+    print(f"Starting domain expiry check for: {domain}")
     print(f"Session ID: {session_id}")
     
     results = {
         "status": "error", 
-        "message": "Domain age check failed to start.",
+        "message": "Domain expiry check failed to start.",
         "session_id": session_id
     }
     
@@ -72,59 +72,64 @@ def check_domain_age(domain):
         # Query WHOIS data
         w = whois.whois(domain)
         
-        # Extract creation date using the helper function
-        creation_date = None
+        # Extract expiry date using the helper function
+        expiry_date = None
         
-        # Try different possible fields for creation date
-        if hasattr(w, 'creation_date') and w.creation_date:
-            creation_date = get_first_date(w.creation_date)
-        elif hasattr(w, 'created') and w.created:
-            creation_date = get_first_date(w.created)
-        elif hasattr(w, 'registration_date') and w.registration_date:
-            creation_date = get_first_date(w.registration_date)
+        # Try different possible fields for expiry date
+        if hasattr(w, 'expiration_date') and w.expiration_date:
+            expiry_date = get_first_date(w.expiration_date)
+        elif hasattr(w, 'expires') and w.expires:
+            expiry_date = get_first_date(w.expires)
+        elif hasattr(w, 'expiry_date') and w.expiry_date:
+            expiry_date = get_first_date(w.expiry_date)
         
-        if not creation_date:
-            raise ValueError("Could not determine domain creation date")
+        if not expiry_date:
+            raise ValueError("Could not determine domain expiry date")
             
         # Parse the date
-        if isinstance(creation_date, str):
+        if isinstance(expiry_date, str):
             # Try to parse different date formats
             try:
-                creation_date = datetime.strptime(creation_date.split(' ')[0], '%Y-%m-%d')
+                expiry_date = datetime.strptime(expiry_date.split(' ')[0], '%Y-%m-%d')
             except ValueError:
                 try:
-                    creation_date = datetime.strptime(creation_date, '%d-%b-%Y')
+                    expiry_date = datetime.strptime(expiry_date, '%d-%b-%Y')
                 except ValueError:
                     try:
-                        creation_date = datetime.strptime(creation_date, '%Y-%m-%dT%H:%M:%SZ')
+                        expiry_date = datetime.strptime(expiry_date, '%Y-%m-%dT%H:%M:%SZ')
                     except ValueError:
-                        raise ValueError(f"Could not parse creation date: {creation_date}")
+                        raise ValueError(f"Could not parse expiry date: {expiry_date}")
         
         # Make both datetimes timezone-naive to avoid subtraction issues
         now = datetime.now()
         if now.tzinfo is not None:
             now = now.replace(tzinfo=None)
-        if creation_date.tzinfo is not None:
-            creation_date = creation_date.replace(tzinfo=None)
+        if expiry_date.tzinfo is not None:
+            expiry_date = expiry_date.replace(tzinfo=None)
         
-        # Calculate domain age
-        age_delta = now - creation_date
+        # Calculate days until expiry
+        days_until_expiry = (expiry_date - now).days
         
-        days = age_delta.days
-        years, remaining_days = divmod(days, 365)
-        months, days = divmod(remaining_days, 30)
-        
-        # Get expiry date if available
-        expiry_date = None
-        if hasattr(w, 'expiration_date') and w.expiration_date:
-            expiry_date = get_first_date(w.expiration_date)
-            if isinstance(expiry_date, str):
+        # Get creation date if available
+        creation_date = None
+        if hasattr(w, 'creation_date') and w.creation_date:
+            creation_date = get_first_date(w.creation_date)
+            if isinstance(creation_date, str):
                 try:
-                    expiry_date = datetime.strptime(expiry_date.split(' ')[0], '%Y-%m-%d')
-                    if expiry_date.tzinfo is not None:
-                        expiry_date = expiry_date.replace(tzinfo=None)
+                    creation_date = datetime.strptime(creation_date.split(' ')[0], '%Y-%m-%d')
+                    if creation_date.tzinfo is not None:
+                        creation_date = creation_date.replace(tzinfo=None)
                 except ValueError:
-                    expiry_date = None
+                    creation_date = None
+        
+        # Get nameservers if available
+        nameservers = []
+        if hasattr(w, 'name_servers') and w.name_servers:
+            nameservers = w.name_servers
+            if isinstance(nameservers, list):
+                nameservers = [ns for ns in nameservers if ns]  # Filter out None values
+            elif nameservers:
+                nameservers = [nameservers]
         
         results = {
             "status": "success",
@@ -132,12 +137,12 @@ def check_domain_age(domain):
             "timestamp": time.time(),
             "session_id": session_id,
             "data": {
-                "creation_date": creation_date.strftime('%Y-%m-%d'),
-                "age_years": years,
-                "age_months": months,
-                "age_days": days,
+                "expiry_date": expiry_date.strftime('%Y-%m-%d'),
+                "days_until_expiry": days_until_expiry,
+                "creation_date": creation_date.strftime('%Y-%m-%d') if creation_date else None,
                 "registrar": getattr(w, 'registrar', 'Unknown'),
-                "expiry_date": expiry_date.strftime('%Y-%m-%d') if expiry_date else None
+                "status": getattr(w, 'status', 'Unknown'),
+                "nameservers": nameservers
             }
         }
         
@@ -160,6 +165,6 @@ if __name__ == "__main__":
         print(f"results={json.dumps({'status': 'error', 'message': 'TARGET_DOMAIN environment variable not set.'})}")
         sys.exit(1)
         
-    domain_results = check_domain_age(target_domain)
+    domain_results = check_domain_expiry(target_domain)
     
     # The results are already printed in the function
