@@ -29,6 +29,15 @@ jobs:
           python -m pip install --upgrade pip
           pip install requests beautifulsoup4 lxml
 
+      - name: Create session marker first
+        run: |
+          # Create a session marker file for easier tracking
+          echo "Session ID: ${{ github.event.inputs.session_id }}" > session_marker_${{ github.event.inputs.session_id }}.txt
+          echo "URL: ${{ github.event.inputs.url }}" >> session_marker_${{ github.event.inputs.session_id }}.txt
+          echo "Timestamp: $(date +%s)" >> session_marker_${{ github.event.inputs.session_id }}.txt
+          echo "Workflow Run ID: ${{ github.run_id }}" >> session_marker_${{ github.event.inputs.session_id }}.txt
+          echo "Created session marker file for session ${{ github.event.inputs.session_id }}"
+
       - name: Run Google Cache Analysis
         id: run_analysis
         env:
@@ -37,11 +46,6 @@ jobs:
         run: |
           # Create a temporary file for output with session ID
           OUTPUT_FILE="google_cache_results_${SESSION_ID}.json"
-          
-          # Create a session marker file for easier tracking
-          echo "Session ID: $SESSION_ID" > session_marker_${SESSION_ID}.txt
-          echo "URL: $TARGET_URL" >> session_marker_${SESSION_ID}.txt
-          echo "Timestamp: $(date +%s)" >> session_marker_${SESSION_ID}.txt
           
           # Run the Python script and capture both stdout and stderr
           python runner/google_cache_checker.py > script_output.txt 2>&1
