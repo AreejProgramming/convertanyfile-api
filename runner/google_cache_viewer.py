@@ -56,6 +56,7 @@ def check_google_cache(url):
     print(f"Starting Google cache check for: {url}")
     print(f"Session ID: {session_id}")
     
+    # Initialize results with error state
     results = {
         "status": "error", 
         "message": "Google cache check failed to start.",
@@ -256,7 +257,12 @@ if __name__ == "__main__":
     target_url = os.environ.get("TARGET_URL")
     if not target_url:
         print("ERROR: TARGET_URL environment variable not set.")
-        print(f"results={json.dumps({'status': 'error', 'message': 'TARGET_URL environment variable not set.'})}")
+        error_result = {
+            "status": "error", 
+            "message": "TARGET_URL environment variable not set.",
+            "session_id": os.environ.get("SESSION_ID", "unknown")
+        }
+        print(f"results={json.dumps(error_result)}")
         sys.exit(0)  # Exit with 0 to prevent workflow failure
         
     cache_results = check_google_cache(target_url)
