@@ -4,9 +4,14 @@ import os
 import json
 import time
 import sys
+import uuid
 import requests
 from urllib.parse import urljoin, urlparse
 from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeoutError
+
+# Add this function to generate a unique session ID
+def generate_session_id():
+    return str(uuid.uuid4())
 
 def check_link_status(url, timeout=10):
     """
@@ -44,9 +49,17 @@ def run_broken_link_check(url):
     Launches a browser, extracts all links, and checks their status.
     Includes robust error handling and logging.
     """
-    print(f"Starting broken link check for URL: {url}") # Log for debugging
+    # Generate a unique session ID for this analysis
+    session_id = generate_session_id()
     
-    results = {"status": "error", "message": "Analysis failed to start."}
+    print(f"Starting broken link check for URL: {url}") # Log for debugging
+    print(f"Session ID: {session_id}")
+    
+    results = {
+        "status": "error", 
+        "message": "Analysis failed to start.",
+        "session_id": session_id
+    }
     
     try:
         # Use sync_playwright as a context manager
@@ -141,6 +154,7 @@ def run_broken_link_check(url):
                 "status": "success",
                 "url": url,
                 "timestamp": time.time(),
+                "session_id": session_id,
                 "data": {
                     "total_links": total_links,
                     "broken_links": broken_count,
@@ -152,11 +166,19 @@ def run_broken_link_check(url):
 
     except PlaywrightTimeoutError as e:
         print(f"ERROR: A timeout occurred. The page took too long to load. Details: {e}")
-        results = {"status": "error", "message": f"Timeout: The page took too long to load."}
+        results = {
+            "status": "error", 
+            "message": f"Timeout: The page took too long to load.",
+            "session_id": session_id
+        }
     except Exception as e:
         # Catch any other exception
         print(f"ERROR: An unexpected error occurred. Details: {e}")
-        results = {"status": "error", "message": f"An unexpected error occurred: {str(e)}"}
+        results = {
+            "status": "error", 
+            "message": f"An unexpected error occurred: {str(e)}",
+            "session_id": session_id
+        }
             
     return results
 
