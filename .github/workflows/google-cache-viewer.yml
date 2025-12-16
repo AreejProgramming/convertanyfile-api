@@ -1,4 +1,4 @@
-name: Run Google Cache Analysis
+name: Google Cache Analysis
 
 on:
   workflow_dispatch:
@@ -8,7 +8,7 @@ on:
         required: true
         type: string
       session_id:
-        description: 'Unique session identifier'
+        description: 'Session identifier'
         required: true
         type: string
 
@@ -29,55 +29,76 @@ jobs:
           python -m pip install --upgrade pip
           pip install requests beautifulsoup4 lxml
 
-      - name: Create session marker
-        run: |
-          echo "Session ID: ${{ github.event.inputs.session_id }}" > session_marker.txt
-          echo "URL: ${{ github.event.inputs.url }}" >> session_marker.txt
-          echo "Timestamp: $(date +%s)" >> session_marker.txt
-          echo "Workflow Run ID: ${{ github.run_id }}" >> session_marker.txt
-
-      - name: Run Google Cache Analysis
-        id: run_analysis
+      - name: Run Cache Analysis
+        id: analysis
         env:
           TARGET_URL: ${{ github.event.inputs.url }}
           SESSION_ID: ${{ github.event.inputs.session_id }}
         run: |
-          OUTPUT_FILE="google_cache_results.json"
-          
-          python runner/google_cache_checker.py > script_output.txt 2>&1
-          SCRIPT_EXIT_CODE=$?
-          
-          echo "=== Script Output ==="
-          cat script_output.txt
-          echo "=== Script Exit Code: $SCRIPT_EXIT_CODE ==="
-          
-          if grep -q "results=" script_output.txt; then
-            grep "results=" script_output.txt | sed 's/results=//' > "$OUTPUT_FILE"
-            echo "Results extracted to $OUTPUT_FILE"
-            echo "=== Extracted Results ==="
-            cat "$OUTPUT_FILE"
-          else
-            ERROR_MESSAGE="No results found in script output"
-            if [ -s script_output.txt ]; then
-              ERROR_MESSAGE="$ERROR_MESSAGE. Script output: $(cat script_output.txt | head -c 200)"
-            fi
+          python -c "
+import os
+import json
+import requests
+from urllib.parse import quote
+import time
+
+def check_cache(url):
+    try:
+        if not url.startswith(('http://', 'https://')):
+            url = 'https://' + url
             
-            echo '{"status": "error", "message": "'"$ERROR_MESSAGE"'"}' > "$OUTPUT_FILE"
-            echo "Created error response: $ERROR_MESSAGE"
+        encoded_url = quote(url, safe='')
+        cache_url = f'https://webcache.googleusercontent.com/search?q=cache:{encoded_url}'
+        
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+        }
+        
+        response = requests.get(cache_url, headers=headers, timeout=10)
+        
+        if response.status_code == 200 and 'Google has not cached' not in response.text:
+            return {
+                'status': 'success',
+                'available': True,
+                'cache_url': cache_url,
+                'original_url': url,
+                'message': 'Cache found'
+            }
+        else:
+            return {
+                'status': 'success',
+                'available': False,
+                'cache_url': None,
+                'original_url': url,
+                'message': 'No cache available'
+            }
+    except Exception as e:
+        return {
+            'status': 'error',
+            'message': str(e),
+            'available': False
+        }
+
+url = os.environ.get('TARGET_URL', '')
+result = check_cache(url)
+result['session_id'] = os.environ.get('SESSION_ID', 'unknown')
+
+print(f'RESULTS_JSON={json.dumps(result)}')
+          " > results.json
+          
+          # Extract the JSON from the output
+          grep "RESULTS_JSON=" results.json | sed 's/RESULTS_JSON=//' > final_results.json
+          
+          # If extraction failed, create a default error file
+          if [ ! -s final_results.json ]; then
+            echo '{"status": "error", "message": "Failed to process results", "session_id": "'${SESSION_ID}'"}' > final_results.json
           fi
           
-          echo "output_file=$OUTPUT_FILE" >> $GITHUB_OUTPUT
+          echo "results_file=final_results.json" >> $GITHUB_OUTPUT
 
-      - name: Upload Results as Artifact
+      - name: Upload Results
         uses: actions/upload-artifact@v4
         with:
-          name: google-cache-results-${{ github.event.inputs.session_id }}
-          path: ${{ steps.run_analysis.outputs.output_file }}
-          retention-days: 1
-          
-      - name: Upload Session Marker
-        uses: actions/upload-artifact@v4
-        with:
-          name: session-marker-${{ github.event.inputs.session_id }}
-          path: session_marker.txt
+          name: cache-results-${{ github.event.inputs.session_id }}
+          path: final_results.json
           retention-days: 1
