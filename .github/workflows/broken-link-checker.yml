@@ -69,3 +69,10 @@ jobs:
           name: broken-link-results-${{ github.event.inputs.session_id }}
           path: ${{ steps.run_analysis.outputs.output_file }}
           retention-days: 1
+          
+      - name: Upload Session Marker
+        uses: actions/upload-artifact@v4
+        with:
+          name: session-marker-${{ github.event.inputs.session_id }}
+          path: session_marker_${{ github.event.inputs.session_id }}.txt
+          retention-days: 1
