@@ -2,16 +2,24 @@ import os
 import json
 import time
 import sys
+import uuid
 from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeoutError
+
+def generate_session_id():
+    return str(uuid.uuid4())
 
 def run_accessibility_check(url):
     """
     Launches a browser, runs axe-core, and returns the results.
     Includes robust error handling and logging.
     """
-    print(f"Starting accessibility check for URL: {url}") # Log for debugging
+    # Get session ID from environment variable
+    session_id = os.environ.get("SESSION_ID", generate_session_id())
     
-    results = {"status": "error", "message": "Analysis failed to start."}
+    print(f"Starting accessibility check for URL: {url}") # Log for debugging
+    print(f"Session ID: {session_id}")
+    
+    results = {"status": "error", "message": "Analysis failed to start.", "session_id": session_id}
     
     try:
         # Use sync_playwright as a context manager
@@ -42,16 +50,17 @@ def run_accessibility_check(url):
                 "status": "success",
                 "url": url,
                 "timestamp": time.time(),
+                "session_id": session_id,
                 "data": axe_results
             }
 
     except PlaywrightTimeoutError as e:
         print(f"ERROR: A timeout occurred. The page took too long to load. Details: {e}")
-        results = {"status": "error", "message": f"Timeout: The page took too long to load."}
+        results = {"status": "error", "message": f"Timeout: The page took too long to load.", "session_id": session_id}
     except Exception as e:
         # Catch any other exception
         print(f"ERROR: An unexpected error occurred. Details: {e}")
-        results = {"status": "error", "message": f"An unexpected error occurred: {str(e)}"}
+        results = {"status": "error", "message": f"An unexpected error occurred: {str(e)}", "session_id": session_id}
             
     return results
 
