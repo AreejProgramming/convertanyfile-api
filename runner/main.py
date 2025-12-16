@@ -1,4 +1,3 @@
-# runner/main.py
 import os
 import json
 import time
@@ -66,12 +65,5 @@ if __name__ == "__main__":
         
     analysis_results = run_accessibility_check(target_url)
     
-    # Save the results to the GITHUB_OUTPUT file
-    output_path = os.environ.get("GITHUB_OUTPUT")
-    
-    # The format for GITHUB_OUTPUT is 'name=value'
-    with open(output_path, "a") as f:
-        f.write(f"results={json.dumps(analysis_results)}\n")
-
-    print("Successfully wrote results to GITHUB_OUTPUT.")
-
+    # Print the results in a format that can be easily extracted
+    print(f"results={json.dumps(analysis_results)}")
