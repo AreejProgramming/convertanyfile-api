@@ -162,6 +162,10 @@ def check_google_cache(url):
                             "data": cache_info
                         }
                         
+                        # Write results to file
+                        with open('results.json', 'w') as f:
+                            json.dump(results, f)
+                        
                         print(f"results={json.dumps(results)}")
                         return results
             except Exception as e:
@@ -241,6 +245,10 @@ def check_google_cache(url):
             "data": cache_info
         }
         
+        # Write results to file
+        with open('results.json', 'w') as f:
+            json.dump(results, f)
+        
     except Exception as e:
         print(f"ERROR: {str(e)}")
         results = {
@@ -248,6 +256,10 @@ def check_google_cache(url):
             "message": str(e),
             "session_id": session_id
         }
+        
+        # Write error results to file
+        with open('results.json', 'w') as f:
+            json.dump(results, f)
     
     # Always output the results, even if there was an error
     print(f"results={json.dumps(results)}")
@@ -262,6 +274,11 @@ if __name__ == "__main__":
             "message": "TARGET_URL environment variable not set.",
             "session_id": os.environ.get("SESSION_ID", "unknown")
         }
+        
+        # Write error results to file
+        with open('results.json', 'w') as f:
+            json.dump(error_result, f)
+        
         print(f"results={json.dumps(error_result)}")
         sys.exit(0)  # Exit with 0 to prevent workflow failure
         
