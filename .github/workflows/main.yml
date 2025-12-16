@@ -7,6 +7,10 @@ on:
         description: 'URL to analyze'
         required: true
         type: string
+      session_id:
+        description: 'Unique session identifier'
+        required: true
+        type: string
 
 jobs:
   analyze:
@@ -30,9 +34,15 @@ jobs:
         id: run_analysis
         env:
           TARGET_URL: ${{ github.event.inputs.url }}
+          SESSION_ID: ${{ github.event.inputs.session_id }}
         run: |
-          # Create a temporary file for output
-          OUTPUT_FILE="accessibility_results.json"
+          # Create a temporary file for output with session ID
+          OUTPUT_FILE="accessibility_results_${SESSION_ID}.json"
+          
+          # Create a session marker file for easier tracking
+          echo "Session ID: $SESSION_ID" > session_marker_${SESSION_ID}.txt
+          echo "URL: $TARGET_URL" >> session_marker_${SESSION_ID}.txt
+          echo "Timestamp: $(date +%s)" >> session_marker_${SESSION_ID}.txt
           
           # Run the Python script and capture output
           python runner/main.py > script_output.txt 2>&1 || true
@@ -59,6 +69,13 @@ jobs:
       - name: Upload Results as Artifact
         uses: actions/upload-artifact@v4  # Updated to v4
         with:
-          name: accessibility-results
+          name: accessibility-results-${{ github.event.inputs.session_id }}
           path: ${{ steps.run_analysis.outputs.output_file }}
+          retention-days: 1
+          
+      - name: Upload Session Marker
+        uses: actions/upload-artifact@v4
+        with:
+          name: session-marker-${{ github.event.inputs.session_id }}
+          path: session_marker_${{ github.event.inputs.session_id }}.txt
           retention-days: 1
