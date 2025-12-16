@@ -10,36 +10,21 @@ on:
 
 jobs:
   analyze:
-    # Use larger runner for faster execution
-    runs-on: ubuntu-latest-4-cores
-    
-    # Set a timeout to prevent hanging
-    timeout-minutes: 5
-    
+    runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v4  # Updated to v4
 
       - name: Set up Python
         uses: actions/setup-python@v4
         with:
           python-version: '3.10'
-          cache: 'pip'  # Cache pip dependencies for faster setup
-
-      - name: Cache Playwright browsers
-        uses: actions/cache@v3
-        with:
-          path: ~/.cache/ms-playwright
-          key: ${{ runner.os }}-playwright-${{ hashFiles('**/requirements.txt') }}
-          restore-keys: |
-            ${{ runner.os }}-playwright-
 
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
           pip install playwright
-          # Install only the browsers we need
-          playwright install chromium --with-deps
+          playwright install chromium
 
       - name: Run Accessibility Analysis
         id: run_analysis
@@ -55,21 +40,25 @@ jobs:
           # Try to find the results in the script output
           if grep -q "results=" script_output.txt; then
             # Extract the JSON results
-            RESULTS_JSON=$(grep "results=" script_output.txt | sed 's/results=//')
-            echo "results=$RESULTS_JSON" >> $GITHUB_OUTPUT
+            grep "results=" script_output.txt | sed 's/results=//' > "$OUTPUT_FILE"
+            echo "Results extracted to $OUTPUT_FILE"
           else
             # If no results found, create an error response
-            ERROR_JSON='{"status": "error", "message": "No results found in script output"}'
-            echo "results=$ERROR_JSON" >> $GITHUB_OUTPUT
+            echo '{"status": "error", "message": "No results found in script output"}' > "$OUTPUT_FILE"
           fi
           
           # Display the output for debugging
           echo "=== Script Output ==="
           cat script_output.txt
+          echo "=== Extracted Results ==="
+          cat "$OUTPUT_FILE"
+          
+          # Save the file path for the next step
+          echo "output_file=$OUTPUT_FILE" >> $GITHUB_OUTPUT
 
       - name: Upload Results as Artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v4  # Updated to v4
         with:
           name: accessibility-results
-          path: accessibility_results.json
+          path: ${{ steps.run_analysis.outputs.output_file }}
           retention-days: 1
