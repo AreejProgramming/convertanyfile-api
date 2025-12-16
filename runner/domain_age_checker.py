@@ -82,7 +82,7 @@ def check_domain_age(domain):
                     creation_date = datetime.strptime(creation_date, '%d-%b-%Y')
                 except ValueError:
                     try:
-                    creation_date = datetime.strptime(creation_date, '%Y-%m-%dT%H:%M:%SZ')
+                        creation_date = datetime.strptime(creation_date, '%Y-%m-%dT%H:%M:%SZ')
                     except ValueError:
                         raise ValueError(f"Could not parse creation date: {creation_date}")
         
@@ -109,28 +109,25 @@ def check_domain_age(domain):
             }
         }
         
-    except ValueError as e:
+    except Exception as e:
+        print(f"ERROR: {str(e)}")
         results = {
             "status": "error", 
             "message": str(e),
             "session_id": session_id
         }
-    except Exception as e:
-        results = {
-            "status": "error", 
-            "message": f"An error occurred while checking domain age: {str(e)}",
-            "session_id": session_id
-        }
-            
+    
+    # Always output the results, even if there was an error
+    print(f"results={json.dumps(results)}")
     return results
 
 if __name__ == "__main__":
     target_domain = os.environ.get("TARGET_DOMAIN")
     if not target_domain:
         print("ERROR: TARGET_DOMAIN environment variable not set.")
+        print(f"results={json.dumps({'status': 'error', 'message': 'TARGET_DOMAIN environment variable not set.'})}")
         sys.exit(1)
         
     domain_results = check_domain_age(target_domain)
     
-    # Print the results in a format that can be easily extracted
-    print(f"results={json.dumps(domain_results)}")
+    # The results are already printed in the function
