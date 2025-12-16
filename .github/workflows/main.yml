@@ -1,8 +1,6 @@
-# .github/workflows/main.yml
 name: Run Accessibility Analysis
 
 on:
-  # Allows you to run this workflow manually from the Actions tab
   workflow_dispatch:
     inputs:
       url:
@@ -32,9 +30,35 @@ jobs:
         id: run_analysis
         env:
           TARGET_URL: ${{ github.event.inputs.url }}
-        run: python runner/main.py
-
-      - name: Display Results
         run: |
-          # The results are passed from the previous step
-          echo '${{ steps.run_analysis.outputs.results }}'
+          # Create a temporary file for output
+          OUTPUT_FILE="accessibility_results.json"
+          
+          # Run the Python script and capture output
+          python runner/main.py > script_output.txt 2>&1 || true
+          
+          # Try to find the results in the script output
+          if grep -q "results=" script_output.txt; then
+            # Extract the JSON results
+            grep "results=" script_output.txt | sed 's/results=//' > "$OUTPUT_FILE"
+            echo "Results extracted to $OUTPUT_FILE"
+          else
+            # If no results found, create an error response
+            echo '{"status": "error", "message": "No results found in script output"}' > "$OUTPUT_FILE"
+          fi
+          
+          # Display the output for debugging
+          echo "=== Script Output ==="
+          cat script_output.txt
+          echo "=== Extracted Results ==="
+          cat "$OUTPUT_FILE"
+          
+          # Save the file path for the next step
+          echo "output_file=$OUTPUT_FILE" >> $GITHUB_OUTPUT
+
+      - name: Upload Results as Artifact
+        uses: actions/upload-artifact@v3
+        with:
+          name: accessibility-results
+          path: ${{ steps.run_analysis.outputs.output_file }}
+          retention-days: 1
