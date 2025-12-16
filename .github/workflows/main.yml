@@ -11,54 +11,44 @@ on:
 jobs:
   analyze:
     runs-on: ubuntu-latest
+    timeout-minutes: 5  # Set a timeout to prevent hanging
+    
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4  # Updated to v4
+        uses: actions/checkout@v4
 
       - name: Set up Python
         uses: actions/setup-python@v4
         with:
           python-version: '3.10'
+          cache: 'pip'  # Cache pip dependencies
 
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
           pip install playwright
-          playwright install chromium
+          playwright install chromium --with-deps  # Install with deps
 
       - name: Run Accessibility Analysis
         id: run_analysis
         env:
           TARGET_URL: ${{ github.event.inputs.url }}
         run: |
-          # Create a temporary file for output
-          OUTPUT_FILE="accessibility_results.json"
-          
           # Run the Python script and capture output
           python runner/main.py > script_output.txt 2>&1 || true
           
           # Try to find the results in the script output
           if grep -q "results=" script_output.txt; then
             # Extract the JSON results
-            grep "results=" script_output.txt | sed 's/results=//' > "$OUTPUT_FILE"
-            echo "Results extracted to $OUTPUT_FILE"
+            RESULTS_JSON=$(grep "results=" script_output.txt | sed 's/results=//')
+            echo "results=$RESULTS_JSON" >> $GITHUB_OUTPUT
           else
             # If no results found, create an error response
-            echo '{"status": "error", "message": "No results found in script output"}' > "$OUTPUT_FILE"
+            ERROR_JSON='{"status": "error", "message": "No results found in script output"}'
+            echo "results=$ERROR_JSON" >> $GITHUB_OUTPUT
           fi
-          
-          # Display the output for debugging
-          echo "=== Script Output ==="
-          cat script_output.txt
-          echo "=== Extracted Results ==="
-          cat "$OUTPUT_FILE"
-          
-          # Save the file path for the next step
-          echo "output_file=$OUTPUT_FILE" >> $GITHUB_OUTPUT
 
-      - name: Upload Results as Artifact
-        uses: actions/upload-artifact@v4  # Updated to v4
-        with:
-          name: accessibility-results
-          path: ${{ steps.run_analysis.outputs.output_file }}
-          retention-days: 1
+      - name: Output Results
+        run: |
+          # Output the results for debugging
+          echo '${{ steps.run_analysis.outputs.results }}'
