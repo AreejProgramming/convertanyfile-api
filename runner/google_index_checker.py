@@ -8,6 +8,7 @@ from bs4 import BeautifulSoup
 from datetime import datetime
 from urllib.parse import urlparse, quote
 import hashlib
+import uuid
 
 def generate_session_id():
     return str(uuid.uuid4())
@@ -67,17 +68,32 @@ def check_google_index(url):
         }
         
         # Make request to Google search
+        print(f"Making request to: {search_url}")
         response = requests.get(search_url, headers=headers, timeout=10)
+        
+        print(f"Response status code: {response.status_code}")
         
         if response.status_code == 200:
             # Parse the HTML content
             soup = BeautifulSoup(response.text, 'html.parser')
             
             # Check for "did not match any documents" message
-            no_results = soup.find(text=re.compile(r'did not match any documents|Your search.*did not match any documents'))
+            no_results_patterns = [
+                r'did not match any documents',
+                r'Your search.*did not match any documents',
+                r'No results found for',
+                r'No results found'
+            ]
+            
+            no_results = None
+            for pattern in no_results_patterns:
+                no_results = soup.find(text=re.compile(pattern, re.IGNORECASE))
+                if no_results:
+                    break
             
             if no_results:
                 # URL is not indexed
+                print("URL is not indexed on Google")
                 index_info = {
                     "is_indexed": False,
                     "url": url,
@@ -91,6 +107,7 @@ def check_google_index(url):
                 }
             else:
                 # URL is indexed - extract more information
+                print("URL appears to be indexed on Google")
                 search_results = soup.find_all('div', class_='g')
                 
                 # Find the result that matches our exact URL
@@ -112,8 +129,21 @@ def check_google_index(url):
                     title_element = exact_match.find('h3')
                     title = title_element.get_text() if title_element else url
                     
-                    # Extract snippet
-                    snippet_element = exact_match.find('span', {'data-ved': True})
+                    # Extract snippet - try multiple selectors
+                    snippet_element = None
+                    snippet_selectors = [
+                        'span[data-ved]',
+                        '.VwiC3b',
+                        '.yDYNvb',
+                        '.s',
+                        '.st'
+                    ]
+                    
+                    for selector in snippet_selectors:
+                        snippet_element = exact_match.select_one(selector)
+                        if snippet_element:
+                            break
+                    
                     snippet = snippet_element.get_text() if snippet_element else "No snippet available"
                     
                     # Get current date for timestamps
@@ -133,6 +163,7 @@ def check_google_index(url):
                     }
                 else:
                     # Fallback - assume indexed but couldn't extract details
+                    print("Couldn't extract details from search results")
                     current_date = datetime.now()
                     index_info = {
                         "is_indexed": True,
@@ -156,10 +187,6 @@ def check_google_index(url):
         else:
             raise ValueError(f"Failed to query Google: HTTP {response.status_code}")
         
-        # Write results to file
-        with open('results.json', 'w') as f:
-            json.dump(results, f)
-        
     except Exception as e:
         print(f"ERROR: {str(e)}")
         results = {
@@ -167,10 +194,21 @@ def check_google_index(url):
             "message": str(e),
             "session_id": session_id
         }
-        
-        # Write error results to file
+    
+    # Always write results to file, even if there was an error
+    try:
         with open('results.json', 'w') as f:
             json.dump(results, f)
+        print("Results successfully written to results.json")
+    except Exception as file_error:
+        print(f"ERROR writing results file: {str(file_error)}")
+        # Try to write to a different location as fallback
+        try:
+            with open(f'/tmp/results_{session_id}.json', 'w') as f:
+                json.dump(results, f)
+            print(f"Results written to fallback location: /tmp/results_{session_id}.json")
+        except Exception as fallback_error:
+            print(f"ERROR writing to fallback location: {str(fallback_error)}")
     
     # Always output the results, even if there was an error
     print(f"results={json.dumps(results)}")
@@ -187,8 +225,12 @@ if __name__ == "__main__":
         }
         
         # Write error results to file
-        with open('results.json', 'w') as f:
-            json.dump(error_result, f)
+        try:
+            with open('results.json', 'w') as f:
+                json.dump(error_result, f)
+            print("Error results written to results.json")
+        except Exception as file_error:
+            print(f"ERROR writing error results file: {str(file_error)}")
         
         print(f"results={json.dumps(error_result)}")
         sys.exit(1)
