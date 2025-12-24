@@ -1,0 +1,97 @@
+name: HTTP Header Checker
+
+on:
+  workflow_dispatch:
+    inputs:
+      url:
+        description: 'URL to check HTTP headers'
+        required: true
+        type: string
+      session_id:
+        description: 'Unique session identifier'
+        required: true
+        type: string
+
+jobs:
+  analyze:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install requests
+
+      - name: Run HTTP Header Analysis
+        id: run_analysis
+        env:
+          TARGET_URL: ${{ github.event.inputs.url }}
+          SESSION_ID: ${{ github.event.inputs.session_id }}
+        run: |
+          # Create a temporary file for output with session ID
+          OUTPUT_FILE="http_headers_${SESSION_ID}.json"
+          
+          # Create a session marker file for easier tracking
+          echo "Session ID: $SESSION_ID" > session_marker_${SESSION_ID}.txt
+          echo "URL: $TARGET_URL" >> session_marker_${SESSION_ID}.txt
+          echo "Timestamp: $(date +%s)" >> session_marker_${SESSION_ID}.txt
+          
+          # Run Python script and capture both stdout and stderr
+          python runner/http_header_checker.py > script_output.txt 2>&1 || true
+          
+          # Display output for debugging
+          echo "=== Script Output ==="
+          cat script_output.txt
+          
+          # Try to find the results.json file created by the script
+          if [ -f "results.json" ]; then
+            # Copy the results to our session-specific file
+            cp results.json "$OUTPUT_FILE"
+            echo "Results copied to $OUTPUT_FILE"
+          else
+            # Check if there's a fallback file in /tmp
+            FALLBACK_FILE="/tmp/results_${SESSION_ID}.json"
+            if [ -f "$FALLBACK_FILE" ]; then
+              cp "$FALLBACK_FILE" "$OUTPUT_FILE"
+              echo "Results copied from fallback location to $OUTPUT_FILE"
+            else
+              # If no results found, create an error response
+              echo '{"status": "error", "message": "No results file found"}' > "$OUTPUT_FILE"
+              echo "Created error response in $OUTPUT_FILE"
+            fi
+          fi
+          
+          # Display the final results for debugging
+          echo "=== Final Results ==="
+          cat "$OUTPUT_FILE"
+          
+          # Save the file path for the next step
+          echo "output_file=$OUTPUT_FILE" >> $GITHUB_OUTPUT
+
+      - name: Upload Results as Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: http-headers-${{ github.event.inputs.session_id }}
+          path: ${{ steps.run_analysis.outputs.output_file }}
+          retention-days: 1
+          
+      - name: Upload Session Marker
+        uses: actions/upload-artifact@v4
+        with:
+          name: session-marker-${{ github.event.inputs.session_id }}
+          path: session_marker_${{ github.event.inputs.session_id }}.txt
+          retention-days: 1
+          
+      - name: Upload Script Output for Debugging
+        uses: actions/upload-artifact@v4
+        with:
+          name: script-output-${{ github.event.inputs.session_id }}
+          path: script_output.txt
+          retention-days: 1
