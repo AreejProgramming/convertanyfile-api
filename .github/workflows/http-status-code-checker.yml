@@ -4,79 +4,103 @@ on:
   workflow_dispatch:
     inputs:
       url:
-        description: 'URL to check HTTP status code'
+        description: 'URL to check HTTP status code for'
         required: true
-        type: string
+        default: 'https://example.com'
       session_id:
-        description: 'Session identifier'
-        required: true
-        type: string
+        description: 'Session ID for tracking'
+        required: false
+        default: ''
 
 jobs:
-  analyze:
+  check-status:
     runs-on: ubuntu-latest
+    
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v4
-        with:
-          python-version: '3.10'
-
-      - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install requests urllib3
-
-      - name: Run Status Code Analysis
-        id: run_analysis
-        env:
-          TARGET_URL: ${{ github.event.inputs.url }}
-          SESSION_ID: ${{ github.event.inputs.session_id }}
-        run: |
-          # Create a temporary file for output with session ID
-          OUTPUT_FILE="status_results_${SESSION_ID}.json"
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.9'
+        
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install requests
+        
+    - name: Generate session ID if not provided
+      if: github.event.inputs.session_id == ''
+      run: |
+        echo "SESSION_ID=$(date +%s)-$(shuf -i 1000-9999 -n 1)" >> $GITHUB_ENV
+        
+    - name: Use provided session ID
+      if: github.event.inputs.session_id != ''
+      run: |
+        echo "SESSION_ID=${{ github.event.inputs.session_id }}" >> $GITHUB_ENV
+        
+    - name: Create session marker
+      run: |
+        echo "Session ID: $SESSION_ID"
+        echo "Session marker created at $(date)"
+        mkdir -p session-markers
+        echo "Session ID: $SESSION_ID" > session-markers/session-marker-$SESSION_ID.txt
+        
+    - name: Upload session marker
+      uses: actions/upload-artifact@v4
+      with:
+        name: session-marker-${{ env.SESSION_ID }}
+        path: session-markers/
+        retention-days: 1
+        
+    - name: Check HTTP status code
+      env:
+        TARGET_URL: ${{ github.event.inputs.url }}
+        SESSION_ID: ${{ env.SESSION_ID }}
+      run: |
+        echo "Checking status code for $TARGET_URL"
+        python runner/http_status_code_checker.py
+        
+    - name: Process results
+      run: |
+        # Check if results file exists
+        if [ -f results.json ]; then
+          echo "Results file found"
+          # Create a copy with session ID in the filename
+          cp results.json status_results_${{ env.SESSION_ID }}.json
           
-          # Create a session marker file for easier tracking
-          echo "Session ID: $SESSION_ID" > session_marker_${SESSION_ID}.txt
-          echo "URL: $TARGET_URL" >> session_marker_${SESSION_ID}.txt
-          echo "Timestamp: $(date +%s)" >> session_marker_${SESSION_ID}.txt
-          
-          # Run Python script and capture both stdout and stderr
-          python runner/check_http_status.py > script_output.txt 2>&1 || true
-          
-          # Display output for debugging
-          echo "=== Script Output ==="
-          cat script_output.txt
-          
-          # Try to find the results.json file created by the script
-          if [ -f "results.json" ]; then
-            # Copy the results to our session-specific file
-            cp results.json "$OUTPUT_FILE"
-            echo "Results copied to $OUTPUT_FILE"
+          # Display results summary
+          echo "Results summary:"
+          if command -v jq &> /dev/null; then
+            jq -r '.status' results.json
+            if [ "$(jq -r '.status' results.json)" = "success" ]; then
+              echo "URL: $(jq -r '.url' results.json)"
+              echo "Status Code: $(jq -r '.data.status_code' results.json)"
+              echo "Status Text: $(jq -r '.data.status_text' results.json)"
+              echo "Response Time: $(jq -r '.data.response_time' results.json)ms"
+              echo "Protocol: $(jq -r '.data.protocol' results.json)"
+              echo "Server: $(jq -r '.data.server' results.json)"
+              echo "Content Type: $(jq -r '.data.content_type' results.json)"
+              echo "Content Size: $(jq -r '.data.content_size' results.json)"
+            else
+              echo "Error: $(jq -r '.message' results.json)"
+            fi
           else
-            # If no results found, create an error response
-            echo '{"status": "error", "message": "No results file found"}' > "$OUTPUT_FILE"
+            echo "jq not available, displaying raw JSON"
+            cat results.json
           fi
-          
-          # Display extracted results for debugging
-          echo "=== Extracted Results ==="
-          cat "$OUTPUT_FILE"
-          
-          # Save file path for next step
-          echo "output_file=$OUTPUT_FILE" >> $GITHUB_OUTPUT
-
-      - name: Upload Results as Artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: status-results-${{ github.event.inputs.session_id }}
-          path: ${{ steps.run_analysis.outputs.output_file }}
-          retention-days: 1
-          
-      - name: Upload Session Marker
-        uses: actions/upload-artifact@v4
-        with:
-          name: session-marker-${{ github.event.inputs.session_id }}
-          path: session_marker_${{ github.event.inputs.session_id }}.txt
-          retention-days: 1
+        else
+          echo "Results file not found"
+          exit 1
+        fi
+        
+    - name: Upload results
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: status-results-${{ env.SESSION_ID }}
+        path: |
+          results.json
+          status_results_${{ env.SESSION_ID }}.json
+        retention-days: 7
