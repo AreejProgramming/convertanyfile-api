@@ -242,12 +242,24 @@ def detect_hosting_provider(url):
             powered_by = "Unknown"
             last_modified = "Unknown"
         
-        # Generate hosting details
+        # Generate hosting details - Fixed Python syntax
+        uptime_value = 95 + (hash(url) % 5)
+        response_time_value = 100 + (hash(url) % 200)
+        plan_value = "Pay-as-you-go" if provider["type"] == "Cloud Hosting" else "Standard Plan"
+        
+        # Handle whois_info.creation_date which can be a list or a single value
+        creation_year = 2013 + (hash(url) % 10)
+        if whois_info and hasattr(whois_info, 'creation_date') and whois_info.creation_date:
+            if isinstance(whois_info.creation_date, list):
+                creation_year = whois_info.creation_date[0].year
+            else:
+                creation_year = whois_info.creation_date.year
+        
         hosting_details = {
-            "uptime": f"{(95 + (hash(url) % 5)).toFixed(2)}%",  # Mock uptime
-            "responseTime": f"{100 + (hash(url) % 200)}ms",  # Mock response time
-            "plan": provider["type"] == "Cloud Hosting" ? "Pay-as-you-go" : "Standard Plan",
-            "since": whois_info and whois_info.creation_date and whois_info.creation_date.year or f"{2013 + (hash(url) % 10)}"
+            "uptime": f"{uptime_value:.2f}%",  # Fixed Python string formatting
+            "responseTime": f"{response_time_value}ms",  # Fixed Python string formatting
+            "plan": plan_value,  # Fixed Python ternary operator
+            "since": str(creation_year)
         }
         
         # Create server info
