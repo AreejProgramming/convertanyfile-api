@@ -56,8 +56,16 @@ jobs:
             cp results.json "$OUTPUT_FILE"
             echo "Results copied to $OUTPUT_FILE"
           else
-            # If no results found, create an error response
-            echo '{"status": "error", "message": "No results file found"}' > "$OUTPUT_FILE"
+            # Check if there's a fallback file in /tmp
+            FALLBACK_FILE="/tmp/results_${SESSION_ID}.json"
+            if [ -f "$FALLBACK_FILE" ]; then
+              cp "$FALLBACK_FILE" "$OUTPUT_FILE"
+              echo "Results copied from fallback location to $OUTPUT_FILE"
+            else
+              # If no results found, create an error response
+              echo '{"status": "error", "message": "No results file found"}' > "$OUTPUT_FILE"
+              echo "Created error response in $OUTPUT_FILE"
+            fi
           fi
           
           # Display the final results for debugging
@@ -79,4 +87,11 @@ jobs:
         with:
           name: session-marker-${{ github.event.inputs.session_id }}
           path: session_marker_${{ github.event.inputs.session_id }}.txt
+          retention-days: 1
+          
+      - name: Upload Script Output for Debugging
+        uses: actions/upload-artifact@v4
+        with:
+          name: script-output-${{ github.event.inputs.session_id }}
+          path: script_output.txt
           retention-days: 1
