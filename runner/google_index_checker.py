@@ -53,9 +53,16 @@ def check_google_index(url):
         
         print(f"Checking Google index for {url}")
         
-        # Create the Google search URL - using the exact URL in quotes
-        encoded_url = quote(f'"{url}"', safe='')
-        search_url = f"https://www.google.com/search?q={encoded_url}"
+        # Method 1: Use site: operator search
+        # This is more reliable than searching for the exact URL
+        parsed_url = urlparse(url)
+        domain = parsed_url.netloc
+        path = parsed_url.path
+        
+        # Create a more specific search query using site: operator
+        search_query = f"site:{domain} {path}"
+        encoded_query = quote(search_query, safe='')
+        search_url = f"https://www.google.com/search?q={encoded_query}"
         
         # Set headers to mimic a real browser
         headers = {
@@ -91,7 +98,33 @@ def check_google_index(url):
                 if no_results:
                     break
             
-            if no_results:
+            # Method 2: Check for results count
+            results_stats = soup.find('div', {'id': 'result-stats'})
+            has_results = False
+            
+            if results_stats:
+                stats_text = results_stats.get_text()
+                print(f"Results stats: {stats_text}")
+                if "About" in stats_text and "results" in stats_text:
+                    has_results = True
+            
+            # Method 3: Look for search results
+            search_results = soup.find_all('div', class_='g')
+            
+            # Method 4: Check if any result contains our exact URL
+            exact_match = False
+            for result in search_results:
+                link_element = result.find('a')
+                if link_element and link_element.get('href'):
+                    result_url = link_element.get('href')
+                    if result_url == url or result_url.startswith(url):
+                        exact_match = True
+                        break
+            
+            # Determine if the URL is indexed
+            is_indexed = not no_results and (has_results or len(search_results) > 0 or exact_match)
+            
+            if not is_indexed:
                 # URL is not indexed
                 print("URL is not indexed on Google")
                 index_info = {
@@ -108,25 +141,24 @@ def check_google_index(url):
             else:
                 # URL is indexed - extract more information
                 print("URL appears to be indexed on Google")
-                search_results = soup.find_all('div', class_='g')
                 
                 # Find the result that matches our exact URL
-                exact_match = None
+                target_result = None
                 for result in search_results:
                     link_element = result.find('a')
                     if link_element and link_element.get('href'):
                         result_url = link_element.get('href')
-                        if result_url == url:
-                            exact_match = result
+                        if result_url == url or result_url.startswith(url):
+                            target_result = result
                             break
                 
                 # If we can't find an exact match, use the first result
-                if not exact_match and search_results:
-                    exact_match = search_results[0]
+                if not target_result and search_results:
+                    target_result = search_results[0]
                 
-                if exact_match:
+                if target_result:
                     # Extract information from the search result
-                    title_element = exact_match.find('h3')
+                    title_element = target_result.find('h3')
                     title = title_element.get_text() if title_element else url
                     
                     # Extract snippet - try multiple selectors
@@ -140,7 +172,7 @@ def check_google_index(url):
                     ]
                     
                     for selector in snippet_selectors:
-                        snippet_element = exact_match.select_one(selector)
+                        snippet_element = target_result.select_one(selector)
                         if snippet_element:
                             break
                     
