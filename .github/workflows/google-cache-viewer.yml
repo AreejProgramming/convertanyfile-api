@@ -30,16 +30,53 @@ jobs:
           pip install requests beautifulsoup4 lxml
 
       - name: Run Cache Analysis
-        id: analysis
+        id: run_analysis
         env:
           TARGET_URL: ${{ github.event.inputs.url }}
           SESSION_ID: ${{ github.event.inputs.session_id }}
         run: |
-          python runner/check_google_cache.py
+          # Create a temporary file for output with session ID
+          OUTPUT_FILE="cache_results_${SESSION_ID}.json"
+          
+          # Create a session marker file for easier tracking
+          echo "Session ID: $SESSION_ID" > session_marker_${SESSION_ID}.txt
+          echo "URL: $TARGET_URL" >> session_marker_${SESSION_ID}.txt
+          echo "Timestamp: $(date +%s)" >> session_marker_${SESSION_ID}.txt
+          
+          # Run Python script and capture both stdout and stderr
+          python runner/check_google_cache.py > script_output.txt 2>&1 || true
+          
+          # Display output for debugging
+          echo "=== Script Output ==="
+          cat script_output.txt
+          
+          # Try to find the results.json file created by the script
+          if [ -f "results.json" ]; then
+            # Copy the results to our session-specific file
+            cp results.json "$OUTPUT_FILE"
+            echo "Results copied to $OUTPUT_FILE"
+          else
+            # If no results found, create an error response
+            echo '{"status": "error", "message": "No results file found"}' > "$OUTPUT_FILE"
+          fi
+          
+          # Display extracted results for debugging
+          echo "=== Extracted Results ==="
+          cat "$OUTPUT_FILE"
+          
+          # Save file path for next step
+          echo "output_file=$OUTPUT_FILE" >> $GITHUB_OUTPUT
 
-      - name: Upload Results
+      - name: Upload Results as Artifact
         uses: actions/upload-artifact@v4
         with:
           name: cache-results-${{ github.event.inputs.session_id }}
-          path: results.json
+          path: ${{ steps.run_analysis.outputs.output_file }}
+          retention-days: 1
+          
+      - name: Upload Session Marker
+        uses: actions/upload-artifact@v4
+        with:
+          name: session-marker-${{ github.event.inputs.session_id }}
+          path: session_marker_${{ github.event.inputs.session_id }}.txt
           retention-days: 1
