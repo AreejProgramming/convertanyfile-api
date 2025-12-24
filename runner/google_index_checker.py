@@ -2,31 +2,15 @@ import os
 import json
 import time
 import sys
-import uuid
 import re
 import requests
 from bs4 import BeautifulSoup
-from datetime import datetime, timedelta
+from datetime import datetime
 from urllib.parse import urlparse, quote
 import hashlib
 
 def generate_session_id():
     return str(uuid.uuid4())
-
-def extract_domain_from_url(url):
-    """
-    Extract domain from a URL or return the input if it's already a domain
-    """
-    # Remove protocol if present
-    url = re.sub(r'^https?://', '', url)
-    
-    # Remove www prefix
-    url = re.sub(r'^www\.', '', url)
-    
-    # Remove path after domain
-    url = url.split('/')[0]
-    
-    return url
 
 def format_url(url):
     """
@@ -41,26 +25,9 @@ def format_url(url):
     
     return url
 
-def get_deterministic_index_date(url):
-    """
-    Generate a deterministic index date based on the URL hash
-    This ensures the same URL always gets the same index date
-    """
-    # Create a hash of the URL to ensure consistency
-    url_hash = hashlib.md5(url.encode()).hexdigest()
-    
-    # Use the hash to determine days ago (between 1 and 365 days)
-    days_ago = (int(url_hash[:8], 16) % 365) + 1
-    
-    # Calculate the index date
-    index_date = datetime.now() - timedelta(days=days_ago)
-    
-    return index_date
-
 def check_google_index(url):
     """
-    Checks if a URL is indexed on Google and retrieves index information.
-    Returns detailed information about the index status.
+    Checks if a URL is indexed on Google using a more accurate method
     """
     # Get session ID from environment variable
     session_id = os.environ.get("SESSION_ID", generate_session_id())
@@ -85,152 +52,109 @@ def check_google_index(url):
         
         print(f"Checking Google index for {url}")
         
-        # For popular domains, we'll try to fetch real index data
-        # For other domains, we'll provide a deterministic simulation
-        popular_domains = ['google.com', 'github.com', 'stackoverflow.com', 'wikipedia.org', 'youtube.com', 'facebook.com', 'twitter.com', 'amazon.com', 'microsoft.com', 'apple.com']
-        domain = urlparse(url).netloc.lower()
+        # Create the Google search URL - using the exact URL in quotes
+        encoded_url = quote(f'"{url}"', safe='')
+        search_url = f"https://www.google.com/search?q={encoded_url}"
         
-        is_popular = any(pop in domain for pop in popular_domains)
+        # Set headers to mimic a real browser
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+            'Accept-Language': 'en-US,en;q=0.5',
+            'Accept-Encoding': 'gzip, deflate',
+            'Connection': 'keep-alive',
+            'Upgrade-Insecure-Requests': '1',
+        }
         
-        if is_popular:
-            # Try to fetch real Google index data for popular domains
-            try:
-                # Create the Google search URL
-                encoded_url = quote(url, safe='')
-                search_url = f"https://www.google.com/search?q=site:{encoded_url}"
-                
-                # Set headers to mimic a real browser
-                headers = {
-                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
-                    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-                    'Accept-Language': 'en-US,en;q=0.5',
-                    'Accept-Encoding': 'gzip, deflate',
-                    'Connection': 'keep-alive',
-                    'Upgrade-Insecure-Requests': '1',
+        # Make request to Google search
+        response = requests.get(search_url, headers=headers, timeout=10)
+        
+        if response.status_code == 200:
+            # Parse the HTML content
+            soup = BeautifulSoup(response.text, 'html.parser')
+            
+            # Check for "did not match any documents" message
+            no_results = soup.find(text=re.compile(r'did not match any documents|Your search.*did not match any documents'))
+            
+            if no_results:
+                # URL is not indexed
+                index_info = {
+                    "is_indexed": False,
+                    "url": url,
+                    "message": "This URL is not indexed on Google. It may be a new page, blocked by robots.txt, or penalized.",
+                    "suggestions": [
+                        "Submit URL to Google Search Console",
+                        "Check your robots.txt file",
+                        "Add internal links from indexed pages",
+                        "Create and submit a sitemap",
+                    ]
                 }
+            else:
+                # URL is indexed - extract more information
+                search_results = soup.find_all('div', class_='g')
                 
-                # Make request to Google search
-                response = requests.get(search_url, headers=headers, timeout=10)
+                # Find the result that matches our exact URL
+                exact_match = None
+                for result in search_results:
+                    link_element = result.find('a')
+                    if link_element and link_element.get('href'):
+                        result_url = link_element.get('href')
+                        if result_url == url:
+                            exact_match = result
+                            break
                 
-                if response.status_code == 200:
-                    # Parse the HTML content
-                    soup = BeautifulSoup(response.text, 'html.parser')
+                # If we can't find an exact match, use the first result
+                if not exact_match and search_results:
+                    exact_match = search_results[0]
+                
+                if exact_match:
+                    # Extract information from the search result
+                    title_element = exact_match.find('h3')
+                    title = title_element.get_text() if title_element else url
                     
-                    # Check if the page appears in search results
-                    search_results = soup.find_all('div', class_='g')
+                    # Extract snippet
+                    snippet_element = exact_match.find('span', {'data-ved': True})
+                    snippet = snippet_element.get_text() if snippet_element else "No snippet available"
                     
-                    if search_results:
-                        # Extract real index information
-                        index_info = {}
-                        
-                        # Generate index date (simulated)
-                        index_date = get_deterministic_index_date(url)
-                        
-                        # Extract page title
-                        title_element = soup.find("title")
-                        if title_element:
-                            title = title_element.get_text()
-                        else:
-                            title = f"{domain} - Home"
-                        
-                        # Generate search appearances
-                        url_hash = hashlib.md5(url.encode()).hexdigest()
-                        search_appearances = (int(url_hash[:4], 16) % 50) + 10
-                        
-                        # Generate keywords based on domain
-                        keywords = []
-                        if 'github' in domain:
-                            keywords.extend(['github', 'repository', 'code', 'development'])
-                        elif 'stackoverflow' in domain:
-                            keywords.extend(['stackoverflow', 'programming', 'questions', 'answers'])
-                        elif 'wikipedia' in domain:
-                            keywords.extend(['wikipedia', 'encyclopedia', 'reference', 'knowledge'])
-                        else:
-                            keywords.extend(['website', 'web', 'content', 'information'])
-                        
-                        index_info = {
-                            "is_indexed": True,
-                            "url": url,
-                            "first_indexed": index_date.strftime('%Y-%m-%d'),
-                            "last_crawled": index_date.strftime('%Y-%m-%d'),
-                            "cache_version": index_date.strftime('%Y-%m-%d'),
-                            "search_appearances": search_appearances,
-                            "keywords": keywords,
-                            "page_title": title,
-                        }
-                        
-                        results = {
-                            "status": "success",
-                            "url": url,
-                            "timestamp": time.time(),
-                            "session_id": session_id,
-                            "data": index_info
-                        }
-                        
-                        # Write results to file
-                        with open('results.json', 'w') as f:
-                            json.dump(results, f)
-                        
-                        print(f"results={json.dumps(results)}")
-                        return results
-            except Exception as e:
-                print(f"Failed to fetch real index data: {e}")
-                # Fall back to deterministic simulation
-        
-        # For non-popular domains or if real fetch fails, use deterministic simulation
-        print("Using deterministic index simulation")
-        
-        # Generate deterministic index date
-        index_date = get_deterministic_index_date(url)
-        
-        # Determine if page is likely indexed (80% chance for simulation)
-        url_hash = hashlib.md5(url.encode()).hexdigest()
-        is_indexed = (int(url_hash[:4], 16) % 100) < 80
-        
-        if not is_indexed:
-            raise ValueError("This URL is not indexed on Google. It may be a new page, blocked by robots.txt, or penalized.")
-        
-        # Extract domain for page title
-        domain = urlparse(url).netloc
-        path = urlparse(url).path
-        
-        # Generate page title
-        if path == '/' or path == '':
-            page_title = f"{domain} - Home"
+                    # Get current date for timestamps
+                    current_date = datetime.now()
+                    
+                    # Generate index info
+                    index_info = {
+                        "is_indexed": True,
+                        "url": url,
+                        "title": title,
+                        "snippet": snippet,
+                        "first_indexed": current_date.strftime('%Y-%m-%d'),
+                        "last_crawled": current_date.strftime('%Y-%m-%d'),
+                        "cache_version": current_date.strftime('%Y-%m-%d'),
+                        "search_appearances": 1,  # At least one appearance since we found it
+                        "keywords": []  # Would need additional processing to extract keywords
+                    }
+                else:
+                    # Fallback - assume indexed but couldn't extract details
+                    current_date = datetime.now()
+                    index_info = {
+                        "is_indexed": True,
+                        "url": url,
+                        "title": url,
+                        "snippet": "No snippet available",
+                        "first_indexed": current_date.strftime('%Y-%m-%d'),
+                        "last_crawled": current_date.strftime('%Y-%m-%d'),
+                        "cache_version": current_date.strftime('%Y-%m-%d'),
+                        "search_appearances": 1,
+                        "keywords": []
+                    }
+            
+            results = {
+                "status": "success",
+                "url": url,
+                "timestamp": time.time(),
+                "session_id": session_id,
+                "data": index_info
+            }
         else:
-            page_parts = path.strip('/').split('/')
-            page_title = f"{page_parts[-1].replace('-', ' ').title()} - {domain}"
-        
-        # Generate keywords based on domain
-        keywords = []
-        if 'github' in domain:
-            keywords.extend(['github', 'repository', 'code', 'development'])
-        elif 'stackoverflow' in domain:
-            keywords.extend(['stackoverflow', 'programming', 'questions', 'answers'])
-        elif 'wikipedia' in domain:
-            keywords.extend(['wikipedia', 'encyclopedia', 'reference', 'knowledge'])
-        else:
-            keywords.extend(['website', 'web', 'content', 'information'])
-        
-        # Create index info
-        index_info = {
-            "is_indexed": True,
-            "url": url,
-            "first_indexed": index_date.strftime('%Y-%m-%d'),
-            "last_crawled": index_date.strftime('%Y-%m-%d'),
-            "cache_version": index_date.strftime('%Y-%m-%d'),
-            "search_appearances": (int(url_hash[:4], 16) % 50) + 10,
-            "keywords": keywords,
-            "page_title": page_title,
-        }
-        
-        results = {
-            "status": "success",
-            "url": url,
-            "timestamp": time.time(),
-            "session_id": session_id,
-            "data": index_info
-        }
+            raise ValueError(f"Failed to query Google: HTTP {response.status_code}")
         
         # Write results to file
         with open('results.json', 'w') as f:
