@@ -10,7 +10,6 @@ import whois
 from datetime import datetime
 from urllib.parse import urlparse
 import uuid
-import ipinfo
 
 def generate_session_id():
     return str(uuid.uuid4())
@@ -43,27 +42,29 @@ def get_ip_address(url):
 
 def get_ip_info(ip_address):
     """
-    Get information about an IP address using ipinfo.io
+    Get information about an IP address using ip-api.com (free service)
     """
     try:
-        # You would need to get an API token from ipinfo.io
-        # For this example, we'll use a mock approach
-        # In a real implementation, you would use:
-        # handler = ipinfo.getHandler(access_token='YOUR_API_TOKEN')
-        # details = handler.getDetails(ip_address)
-        
-        # Mock data for demonstration
-        return {
-            "ip": ip_address,
-            "hostname": None,
-            "city": "New York",
-            "region": "New York",
-            "country": "US",
-            "loc": "40.7128,-74.0060",
-            "org": "AS12345 Example Hosting Provider",
-            "postal": "10001",
-            "timezone": "America/New_York"
-        }
+        response = requests.get(f"http://ip-api.com/json/{ip_address}?fields=status,message,country,regionName,city,zip,isp,org,as,reverse,mobile,proxy,hosting", timeout=10)
+        if response.status_code == 200:
+            data = response.json()
+            if data['status'] == 'success':
+                return {
+                    "ip": ip_address,
+                    "hostname": data.get("reverse", ""),
+                    "city": data.get("city", "Unknown"),
+                    "region": data.get("regionName", "Unknown"),
+                    "country": data.get("country", "Unknown"),
+                    "loc": f"{data.get('lat', '')},{data.get('lon', '')}",
+                    "org": data.get("org", data.get("isp", "")),
+                    "postal": data.get("zip", ""),
+                    "timezone": data.get("timezone", ""),
+                    "as": data.get("as", ""),
+                    "mobile": data.get("mobile", False),
+                    "proxy": data.get("proxy", False),
+                    "hosting": data.get("hosting", False)
+                }
+        return None
     except Exception as e:
         print(f"Error getting IP info: {str(e)}")
         return None
@@ -117,10 +118,10 @@ def detect_hosting_provider(url):
     print(f"Starting hosting provider check for: {url}")
     print(f"Session ID: {session_id}")
     
-    # Initialize results with error state
+    # Initialize results
     results = {
-        "status": "error", 
-        "message": "Hosting provider check failed to start.",
+        "status": "processing", 
+        "message": "Analyzing hosting provider...",
         "session_id": session_id
     }
     
@@ -148,7 +149,9 @@ def detect_hosting_provider(url):
         whois_info = get_whois_info(url)
         
         # Extract hosting provider from IP info
-        org = ip_info.get("org", "")
+        org = ip_info.get("org", "").lower()
+        hostname = ip_info.get("hostname", "").lower()
+        as_info = ip_info.get("as", "").lower()
         
         # Determine hosting provider based on patterns
         provider = {
@@ -159,76 +162,172 @@ def detect_hosting_provider(url):
         }
         
         # Check for common hosting providers
-        if "Amazon" in org or "AWS" in org:
-            provider = {
+        hosting_providers = {
+            "amazon": {
                 "name": "Amazon Web Services (AWS)",
                 "type": "Cloud Hosting",
                 "features": ["EC2 Instances", "S3 Storage", "Global Infrastructure"],
                 "priceRange": "Pay-as-you-go"
-            }
-        elif "Google" in org:
-            provider = {
+            },
+            "aws": {
+                "name": "Amazon Web Services (AWS)",
+                "type": "Cloud Hosting",
+                "features": ["EC2 Instances", "S3 Storage", "Global Infrastructure"],
+                "priceRange": "Pay-as-you-go"
+            },
+            "google": {
                 "name": "Google Cloud Platform",
                 "type": "Cloud Hosting",
                 "features": ["Compute Engine", "Cloud Storage", "Global Network"],
                 "priceRange": "Pay-as-you-go"
-            }
-        elif "Microsoft" in org or "Azure" in org:
-            provider = {
+            },
+            "microsoft": {
                 "name": "Microsoft Azure",
                 "type": "Cloud Hosting",
                 "features": ["Virtual Machines", "Blob Storage", "Global Infrastructure"],
                 "priceRange": "Pay-as-you-go"
-            }
-        elif "DigitalOcean" in org:
-            provider = {
+            },
+            "azure": {
+                "name": "Microsoft Azure",
+                "type": "Cloud Hosting",
+                "features": ["Virtual Machines", "Blob Storage", "Global Infrastructure"],
+                "priceRange": "Pay-as-you-go"
+            },
+            "digitalocean": {
                 "name": "DigitalOcean",
                 "type": "Cloud VPS",
                 "features": ["Droplets", "Kubernetes", "Load Balancers"],
                 "priceRange": "$4 - $960/mo"
-            }
-        elif "Cloudflare" in org:
-            provider = {
+            },
+            "cloudflare": {
                 "name": "Cloudflare",
                 "type": "Edge Platform",
                 "features": ["DDoS Protection", "Workers", "Pages"],
                 "priceRange": "Free - $5,000+/mo"
-            }
-        elif "Bluehost" in org or any(ns.lower().find("bluehost") != -1 for ns in nameservers):
-            provider = {
+            },
+            "bluehost": {
                 "name": "Bluehost",
                 "type": "Shared Hosting",
                 "features": ["WordPress Optimized", "Free SSL", "24/7 Support"],
                 "priceRange": "$2.95 - $13.95/mo"
-            }
-        elif "HostGator" in org or any(ns.lower().find("hostgator") != -1 for ns in nameservers):
-            provider = {
+            },
+            "hostgator": {
                 "name": "HostGator",
                 "type": "Shared Hosting",
                 "features": ["Unlimited Bandwidth", "Free Domain", "Website Builder"],
                 "priceRange": "$2.75 - $5.95/mo"
-            }
-        elif "GoDaddy" in org or any(ns.lower().find("godaddy") != -1 for ns in nameservers):
-            provider = {
+            },
+            "godaddy": {
                 "name": "GoDaddy",
                 "type": "Shared Hosting",
                 "features": ["Easy Setup", "Microsoft 365", "Daily Backups"],
                 "priceRange": "$1.99 - $24.99/mo"
-            }
-        elif "SiteGround" in org or any(ns.lower().find("siteground") != -1 for ns in nameservers):
-            provider = {
+            },
+            "siteground": {
                 "name": "SiteGround",
                 "type": "Managed Hosting",
                 "features": ["SuperCacher", "Daily Backups", "Free CDN"],
                 "priceRange": "$3.99 - $10.69/mo"
-            }
-        elif "Vultr" in org or any(ns.lower().find("vultr") != -1 for ns in nameservers):
-            provider = {
+            },
+            "vultr": {
                 "name": "Vultr",
                 "type": "Cloud VPS",
                 "features": ["High Frequency", "Bare Metal", "Global Network"],
                 "priceRange": "$2.50 - $500/mo"
+            },
+            "linode": {
+                "name": "Linode",
+                "type": "Cloud VPS",
+                "features": ["NodeBalancer", "Object Storage", "Kubernetes"],
+                "priceRange": "$5 - $160/mo"
+            },
+            "ovh": {
+                "name": "OVHcloud",
+                "type": "Cloud Hosting",
+                "features": ["Dedicated Servers", "VPS", "Global Infrastructure"],
+                "priceRange": "€2.99 - €500+/mo"
+            },
+            "hetzner": {
+                "name": "Hetzner",
+                "type": "Dedicated/VPS Hosting",
+                "features": ["Dedicated Servers", "Cloud VPS", "Global Network"],
+                "priceRange": "€2.49 - €160+/mo"
+            },
+            "namecheap": {
+                "name": "Namecheap",
+                "type": "Shared Hosting",
+                "features": ["Free Domain", "SSL Certificate", "Easy Setup"],
+                "priceRange": "$3.88 - $18.88/mo"
+            },
+            "wix": {
+                "name": "Wix",
+                "type": "Website Builder",
+                "features": ["Drag & Drop Builder", "Templates", "Hosting Included"],
+                "priceRange": "Free - $500+/mo"
+            },
+            "squarespace": {
+                "name": "Squarespace",
+                "type": "Website Builder",
+                "features": ["Templates", "E-commerce", "All-in-One Platform"],
+                "priceRange": "$16 - $49/mo"
+            },
+            "wordpress": {
+                "name": "WordPress.com",
+                "type": "Managed WordPress Hosting",
+                "features": ["Managed WordPress", "Themes", "Plugins"],
+                "priceRange": "$4 - $200+/mo"
+            },
+            "github": {
+                "name": "GitHub Pages",
+                "type": "Static Site Hosting",
+                "features": ["Free Hosting", "Custom Domains", "SSL"],
+                "priceRange": "Free - $21+/mo"
+            },
+            "netlify": {
+                "name": "Netlify",
+                "type": "Static Site Hosting",
+                "features": ["CI/CD", "Serverless Functions", "Global CDN"],
+                "priceRange": "Free - $19+/mo"
+            },
+            "vercel": {
+                "name": "Vercel",
+                "type": "Static Site Hosting",
+                "features": ["Serverless Functions", "Global CDN", "Preview Deployments"],
+                "priceRange": "Free - $20+/mo"
+            },
+            "fastly": {
+                "name": "Fastly",
+                "type": "Edge Platform",
+                "features": ["CDN", "Security", "Real-time Analytics"],
+                "priceRange": "$50 - $5000+/mo"
+            },
+            "akamai": {
+                "name": "Akamai",
+                "type": "Edge Platform",
+                "features": ["CDN", "Security", "Performance Optimization"],
+                "priceRange": "Custom Pricing"
             }
+        }
+        
+        # Check for matches
+        found_provider = False
+        for key, provider_info in hosting_providers.items():
+            if key in org or key in hostname or key in as_info:
+                provider = provider_info
+                found_provider = True
+                break
+        
+        # If still unknown, check nameservers
+        if not found_provider:
+            for ns in nameservers:
+                ns_lower = ns.lower()
+                for key, provider_info in hosting_providers.items():
+                    if key in ns_lower:
+                        provider = provider_info
+                        found_provider = True
+                        break
+                if found_provider:
+                    break
         
         # Get server headers
         try:
@@ -242,23 +341,23 @@ def detect_hosting_provider(url):
             powered_by = "Unknown"
             last_modified = "Unknown"
         
-        # Generate hosting details - Fixed Python syntax
+        # Generate hosting details
         uptime_value = 95 + (hash(url) % 5)
         response_time_value = 100 + (hash(url) % 200)
-        plan_value = "Pay-as-you-go" if provider["type"] == "Cloud Hosting" else "Standard Plan"
+        plan_value = "Pay-as-you-go" if "cloud" in provider["type"].lower() else "Standard Plan"
         
         # Handle whois_info.creation_date which can be a list or a single value
         creation_year = 2013 + (hash(url) % 10)
         if whois_info and hasattr(whois_info, 'creation_date') and whois_info.creation_date:
             if isinstance(whois_info.creation_date, list):
-                creation_year = whois_info.creation_date[0].year
+                creation_year = whois_info.creation_date[0].year if whois_info.creation_date[0] else creation_year
             else:
-                creation_year = whois_info.creation_date.year
+                creation_year = whois_info.creation_date.year if whois_info.creation_date else creation_year
         
         hosting_details = {
-            "uptime": f"{uptime_value:.2f}%",  # Fixed Python string formatting
-            "responseTime": f"{response_time_value}ms",  # Fixed Python string formatting
-            "plan": plan_value,  # Fixed Python ternary operator
+            "uptime": f"{uptime_value:.2f}%",
+            "responseTime": f"{response_time_value}ms",
+            "plan": plan_value,
             "since": str(creation_year)
         }
         
@@ -269,7 +368,9 @@ def detect_hosting_provider(url):
             "nameservers": nameservers,
             "server": server,
             "x-powered-by": powered_by,
-            "last-modified": last_modified
+            "last-modified": last_modified,
+            "isp": ip_info.get("org", "Unknown"),
+            "asn": ip_info.get("as", "Unknown")
         }
         
         # Create final results
