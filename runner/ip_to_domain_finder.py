@@ -5,9 +5,7 @@ import sys
 import re
 import requests
 import socket
-import subprocess
 from datetime import datetime
-from urllib.parse import urlparse
 import uuid
 
 def generate_session_id():
@@ -70,86 +68,20 @@ def find_domains_for_ip(ip):
     """
     domains = []
     
-    # Method 1: Use viewdns.info reverse IP lookup
+    # Method 1: Use HackerTarget API (most reliable)
     try:
-        url = f"https://viewdns.info/reverseip/?host={ip}&t=1"
-        headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
-        }
-        
-        response = requests.get(url, headers=headers, timeout=15)
+        url = f"https://api.hackertarget.com/reverseiplookup/?q={ip}"
+        response = requests.get(url, timeout=15)
         
         if response.status_code == 200:
-            # Parse the HTML response to extract domains
-            import re
-            pattern = r'<tr><td>([^<]+)</td><td><a[^>]+>([^<]+)</a></td></tr>'
-            matches = re.findall(pattern, response.text)
-            
-            for match in matches:
-                domain = match[1].strip()
-                if domain and domain not in domains:
-                    # Check if domain is active
-                    try:
-                        socket.gethostbyname(domain)
-                        status = 'active'
-                    except:
-                        status = 'inactive'
-                    
-                    domains.append({
-                        "name": domain,
-                        "title": f"Website {len(domains) + 1}",
-                        "status": status
-                    })
-    except Exception as e:
-        print(f"Error with viewdns.info: {str(e)}")
-    
-    # Method 2: Use hackertarget.com if we don't have enough domains
-    if len(domains) < 5:
-        try:
-            url = f"https://api.hackertarget.com/reverseiplookup/?q={ip}"
-            response = requests.get(url, timeout=15)
-            
-            if response.status_code == 200:
+            if "error" not in response.text.lower() and "no records" not in response.text.lower():
                 domain_list = response.text.strip().split('\n')
                 
                 for domain in domain_list:
                     domain = domain.strip()
-                    if domain and domain not in [d["name"] for d in domains]:
-                        # Check if domain is active
-                        try:
-                            socket.gethostbyname(domain)
-                            status = 'active'
-                        except:
-                            status = 'inactive'
-                        
-                        domains.append({
-                            "name": domain,
-                            "title": f"Website {len(domains) + 1}",
-                            "status": status
-                        })
-        except Exception as e:
-            print(f"Error with hackertarget.com: {str(e)}")
-    
-    # Method 3: Use yougetsignal.com as a fallback
-    if len(domains) < 5:
-        try:
-            url = f"https://www.yougetsignal.com/tools/web-sites-on-web-server/php/get-web-sites-on-web-server-json-data.php"
-            data = {
-                'remoteAddress': ip,
-                'key': ''
-            }
-            
-            response = requests.post(url, data=data, timeout=15)
-            
-            if response.status_code == 200:
-                result = response.json()
-                
-                if result.get('status') == 'Success':
-                    domain_list = result.get('domainArray', [])
-                    
-                    for domain in domain_list:
-                        domain = domain.strip()
-                        if domain and domain not in [d["name"] for d in domains]:
+                    if domain and not domain.startswith('Error') and domain not in [d.get("name", "") for d in domains]:
+                        # Basic validation - skip if it looks like an error message
+                        if len(domain) > 3 and '.' in domain and ' ' not in domain:
                             # Check if domain is active
                             try:
                                 socket.gethostbyname(domain)
@@ -162,10 +94,91 @@ def find_domains_for_ip(ip):
                                 "title": f"Website {len(domains) + 1}",
                                 "status": status
                             })
+    except Exception as e:
+        print(f"Error with hackertarget.com: {str(e)}")
+    
+    # Method 2: Use YouGetSignal API as fallback
+    if len(domains) < 5:
+        try:
+            url = "https://domains.yougetsignal.com/domains.php"
+            headers = {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+                'Referer': 'https://www.yougetsignal.com/tools/web-sites-on-web-server/',
+                'X-Requested-With': 'XMLHttpRequest'
+            }
+            data = {
+                'remoteAddress': ip,
+                'key': ''
+            }
+            
+            response = requests.post(url, data=data, headers=headers, timeout=15)
+            
+            if response.status_code == 200:
+                try:
+                    result = response.json()
+                    
+                    if result.get('status') == 'Success':
+                        domain_list = result.get('domainArray', [])
+                        
+                        for domain_info in domain_list:
+                            if isinstance(domain_info, list) and len(domain_info) > 0:
+                                domain = domain_info[0].strip()
+                                if domain and domain not in [d.get("name", "") for d in domains]:
+                                    # Basic validation
+                                    if len(domain) > 3 and '.' in domain and ' ' not in domain:
+                                        # Check if domain is active
+                                        try:
+                                            socket.gethostbyname(domain)
+                                            status = 'active'
+                                        except:
+                                            status = 'inactive'
+                                        
+                                        domains.append({
+                                            "name": domain,
+                                            "title": f"Website {len(domains) + 1}",
+                                            "status": status
+                                        })
+                except Exception as parse_error:
+                    print(f"Error parsing yougetsignal response: {str(parse_error)}")
         except Exception as e:
             print(f"Error with yougetsignal.com: {str(e)}")
     
-    return domains
+    # Method 3: Use ViewDNS API (if available)
+    if len(domains) < 5:
+        try:
+            url = f"https://api.viewdns.info/reverseip/?host={ip}&apikey=demo&output=json"
+            response = requests.get(url, timeout=15)
+            
+            if response.status_code == 200:
+                try:
+                    result = response.json()
+                    
+                    if result.get('query') and result.get('response'):
+                        domain_list = result['response'].get('domains', [])
+                        
+                        for domain_info in domain_list:
+                            domain = domain_info.get('name', '').strip()
+                            if domain and domain not in [d.get("name", "") for d in domains]:
+                                # Basic validation
+                                if len(domain) > 3 and '.' in domain and ' ' not in domain:
+                                    # Check if domain is active
+                                    try:
+                                        socket.gethostbyname(domain)
+                                        status = 'active'
+                                    except:
+                                        status = 'inactive'
+                                    
+                                    domains.append({
+                                        "name": domain,
+                                        "title": f"Website {len(domains) + 1}",
+                                        "status": status
+                                    })
+                except Exception as parse_error:
+                    print(f"Error parsing viewdns response: {str(parse_error)}")
+        except Exception as e:
+            print(f"Error with viewdns.info: {str(e)}")
+    
+    return domains[:20]  # Limit to 20 domains to avoid overwhelming results
 
 def check_ip_domains(ip):
     """
@@ -222,16 +235,18 @@ def check_ip_domains(ip):
     
     # Always write results to file, even if there was an error
     try:
-        with open('results.json', 'w') as f:
+        filename = f'results_{session_id}.json'
+        with open(filename, 'w') as f:
             json.dump(results, f)
-        print("Results successfully written to results.json")
+        print(f"Results successfully written to {filename}")
     except Exception as file_error:
         print(f"ERROR writing results file: {str(file_error)}")
         # Try to write to a different location as fallback
         try:
-            with open(f'/tmp/results_{session_id}.json', 'w') as f:
+            fallback_filename = f'/tmp/results_{session_id}.json'
+            with open(fallback_filename, 'w') as f:
                 json.dump(results, f)
-            print(f"Results written to fallback location: /tmp/results_{session_id}.json")
+            print(f"Results written to fallback location: {fallback_filename}")
         except Exception as fallback_error:
             print(f"ERROR writing to fallback location: {str(fallback_error)}")
     
@@ -251,9 +266,11 @@ if __name__ == "__main__":
         
         # Write error results to file
         try:
-            with open('results.json', 'w') as f:
+            session_id = os.environ.get("SESSION_ID", generate_session_id())
+            filename = f'results_{session_id}.json'
+            with open(filename, 'w') as f:
                 json.dump(error_result, f)
-            print("Error results written to results.json")
+            print(f"Error results written to {filename}")
         except Exception as file_error:
             print(f"ERROR writing error results file: {str(file_error)}")
         
