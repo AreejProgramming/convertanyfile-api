@@ -28,7 +28,7 @@ jobs:
     - name: Install system dependencies
       run: |
         sudo apt-get update
-        sudo apt-get install -y chromium-driver chromium-browser xvfb
+        sudo apt-get install -y chromium-browser chromium-driver xvfb
         
     - name: Install Python dependencies
       run: |
@@ -42,6 +42,21 @@ jobs:
         else
           echo "SESSION_ID=${{ github.event.inputs.session_id }}" >> $GITHUB_ENV
         fi
+        echo "Using session ID: $SESSION_ID"
+        
+    - name: Create session marker
+      run: |
+        echo "Session ID: $SESSION_ID"
+        echo "Session marker created at $(date)"
+        mkdir -p session-markers
+        echo "Session ID: $SESSION_ID" > session-markers/session-marker-$SESSION_ID.txt
+        
+    - name: Upload session marker
+      uses: actions/upload-artifact@v4
+      with:
+        name: session-marker-${{ env.SESSION_ID }}
+        path: session-markers/
+        retention-days: 1
         
     - name: Test mobile-friendliness
       env:
