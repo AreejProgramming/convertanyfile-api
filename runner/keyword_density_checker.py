@@ -34,22 +34,26 @@ def fetch_content_from_url(url):
         
         if response.status_code == 200:
             # Extract text content from HTML
-            from bs4 import BeautifulSoup
-            soup = BeautifulSoup(response.text, 'html.parser')
-            
-            # Remove script and style elements
-            for script in soup(["script", "style"]):
-                script.extract()
+            try:
+                from bs4 import BeautifulSoup
+                soup = BeautifulSoup(response.text, 'html.parser')
                 
-            # Get text content
-            text = soup.get_text()
-            
-            # Clean up text
-            lines = (line.strip() for line in text.splitlines())
-            chunks = (phrase.strip() for line in lines for phrase in line.split("  "))
-            text = '\n'.join(chunk for chunk in chunks if chunk)
-            
-            return text
+                # Remove script and style elements
+                for script in soup(["script", "style"]):
+                    script.extract()
+                    
+                # Get text content
+                text = soup.get_text()
+                
+                # Clean up text
+                lines = (line.strip() for line in text.splitlines())
+                chunks = (phrase.strip() for line in lines for phrase in line.split("  "))
+                text = '\n'.join(chunk for chunk in chunks if chunk)
+                
+                return text
+            except ImportError:
+                # If BeautifulSoup is not available, return raw text
+                return response.text
         else:
             return None
     except Exception as e:
@@ -58,7 +62,7 @@ def fetch_content_from_url(url):
 
 def analyze_keyword_density(content):
     """
-    Analyze keyword density in the provided content
+    Analyze keyword density in provided content
     """
     # Stop words list
     stop_words = set([
@@ -72,7 +76,8 @@ def analyze_keyword_density(content):
     # Count word frequency (excluding stop words and short words)
     word_frequency = {}
     for word in words:
-        if not stop_words.has(word) and len(word) > 2:
+        # Fixed: Use 'in' operator instead of 'has()' method
+        if word not in stop_words and len(word) > 2:
             word_frequency[word] = word_frequency.get(word, 0) + 1
     
     # Calculate density and sort by density
@@ -121,7 +126,7 @@ def check_keyword_density(content):
             text_to_analyze = fetch_content_from_url(content)
             
             if not text_to_analyze:
-                raise ValueError("Failed to fetch content from the provided URL")
+                raise ValueError("Failed to fetch content from provided URL")
         
         # Validate that we have content to analyze
         if not text_to_analyze or not text_to_analyze.strip():
