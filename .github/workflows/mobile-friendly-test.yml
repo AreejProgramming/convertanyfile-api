@@ -7,17 +7,21 @@ on:
         description: 'URL to test for mobile-friendliness'
         required: true
         default: 'https://example.com'
+      session_id:
+        description: 'Optional session ID for tracking'
+        required: false
+        default: ''
 
 jobs:
   test-mobile-friendly:
-    runs-on: ubuntu-latest  # Use GitHub's standard runner instead of container
+    runs-on: ubuntu-latest
     
     steps:
     - name: Checkout repository
       uses: actions/checkout@v4
       
     - name: Set up Python
-      uses: actions/setup-python@v5  # Try newer version
+      uses: actions/setup-python@v5
       with:
         python-version: '3.10'
         
@@ -31,17 +35,21 @@ jobs:
         python -m pip install --upgrade pip
         pip install requests selenium webdriver-manager
         
-    - name: Generate session ID
+    - name: Generate or use session ID
       run: |
-        echo "SESSION_ID=$(date +%s)-$(shuf -i 1000-9999 -n 1)" >> $GITHUB_ENV
+        if [ -z "${{ github.event.inputs.session_id }}" ]; then
+          echo "SESSION_ID=$(date +%s)-$(shuf -i 1000-9999 -n 1)" >> $GITHUB_ENV
+        else
+          echo "SESSION_ID=${{ github.event.inputs.session_id }}" >> $GITHUB_ENV
+        fi
         
     - name: Test mobile-friendliness
       env:
         URL: ${{ github.event.inputs.url }}
         SESSION_ID: ${{ env.SESSION_ID }}
       run: |
-        echo "Testing mobile-friendliness for $URL"
-        python runner/mobile_friendly_test.py  # Use non-Docker version
+        echo "Testing mobile-friendliness for $URL with session ID $SESSION_ID"
+        python runner/mobile_friendly_test.py
         
     - name: Upload results
       if: always()
