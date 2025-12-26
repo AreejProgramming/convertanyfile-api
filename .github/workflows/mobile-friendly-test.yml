@@ -7,48 +7,112 @@ on:
         description: 'URL to test for mobile-friendliness'
         required: true
         default: 'https://example.com'
+      session_id:
+        description: 'Session ID for tracking'
+        required: false
+        default: ''
 
 jobs:
   test-mobile-friendly:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
+    container: 
+      image: selenium/standalone-chrome:latest
+      options: --shm-size=2gb
     
     steps:
     - name: Checkout repository
       uses: actions/checkout@v4
+      continue-on-error: true  # Continue even if checkout fails
       
+    - name: Set up working directory
+      run: |
+        mkdir -p /tmp/work
+        cd /tmp/work
+        echo "Working in /tmp/work"
+        
     - name: Set up Python
       uses: actions/setup-python@v4
       with:
         python-version: '3.9'
         
-    - name: Install Chrome and dependencies
+    - name: Install dependencies
       run: |
-        sudo apt-get update
-        sudo apt-get install -y chromium-chromedriver
+        python -m pip install --upgrade pip
         pip install requests selenium
         
-    - name: Set up Selenium
+    - name: Generate session ID if not provided
+      if: github.event.inputs.session_id == ''
       run: |
-        # Download and set up ChromeDriver
-        CHROMEDRIVER_VERSION=`curl -sS chromedriver.storage.googleapis.com/LATEST_RELEASE`
-        sudo apt-get update
-        sudo apt-get install -y chromium-browser
-        wget -N http://chromedriver.storage.googleapis.com/$CHROMEDRIVER_VERSION/chromedriver_linux64.zip -P ~/
-        unzip ~/chromedriver_linux64.zip -d ~/
-        sudo mv ~/chromedriver /usr/local/bin/chromedriver
-        sudo chmod +x /usr/local/bin/chromedriver
+        echo "SESSION_ID=$(date +%s)-$(shuf -i 1000-9999 -n 1) >> $GITHUB_ENV
         
-    - name: Generate session ID
+    - name: Use provided session ID
+      if: github.event.inputs.session_id != ''
       run: |
-        echo "SESSION_ID=$(date +%s)-$(shuf -i 1000-9999 -n 1)" >> $GITHUB_ENV
+        echo "SESSION_ID=${{ github.event.inputs.session_id }}" >> $GITHUB_ENV
+        
+    - name: Create session marker
+      run: |
+        echo "Session ID: $SESSION_ID"
+        echo "Session marker created at $(date)"
+        mkdir -p /tmp/session-markers
+        echo "Session ID: $SESSION_ID" > /tmp/session-markers/session-marker-$SESSION_ID.txt
+        
+    - name: Upload session marker
+      uses: actions/upload-artifact@v4
+      with:
+        name: session-marker-${{ env.SESSION_ID }}
+        path: /tmp/session-markers/
+        retention-days: 1
         
     - name: Test mobile-friendliness
       env:
         URL: ${{ github.event.inputs.url }}
         SESSION_ID: ${{ env.SESSION_ID }}
+        REMOTE_DRIVER_URL: http://localhost:4444/wd/hub
       run: |
         echo "Testing mobile-friendliness for $URL"
+        # Copy script to tmp and run from there
+        cp -r /__w/convertanyfile-api/convertanyfile-api/runner /tmp/
+        cd /tmp
         python runner/mobile_friendly_test_docker.py
+        
+    - name: Process results
+      run: |
+        # Check if results file exists in multiple locations
+        if [ -f /tmp/results.json ] || [ -f /tmp/results_*.json ] || [ -f results.json ]; then
+          echo "Results file found"
+          # Find and copy the results file
+          find /tmp -name "results*.json" -exec cp {} /tmp/final_results.json \; 2>/dev/null || true
+          if [ -f results.json ]; then
+            cp results.json /tmp/final_results.json
+          fi
+          
+          # Display results summary
+          if [ -f /tmp/final_results.json ]; then
+            echo "Results summary:"
+            if command -v jq &> /dev/null; then
+              jq -r '.status' /tmp/final_results.json
+              if [ "$(jq -r '.status' /tmp/final_results.json)" = "success" ]; then
+                echo "URL: $(jq -r '.url' /tmp/final_results.json)"
+                echo "Overall Score: $(jq -r '.data.overallScore' /tmp/final_results.json)"
+                echo "Mobile-Friendly: $(jq -r '.data.isMobileFriendly' /tmp/final_results.json)"
+              else
+                echo "Error: $(jq -r '.message' /tmp/final_results.json)"
+              fi
+            else
+              echo "jq not available, displaying raw JSON"
+              cat /tmp/final_results.json
+            fi
+          fi
+        else
+          echo "Results file not found"
+          ls -la /tmp/ 2>/dev/null || true
+          ls -la . 2>/dev/null || true
+          exit 1
+        fi
         
     - name: Upload results
       if: always()
@@ -56,5 +120,7 @@ jobs:
       with:
         name: mobile-test-results-${{ env.SESSION_ID }}
         path: |
+          /tmp/results*.json
+          /tmp/final_results.json
           results.json
         retention-days: 7
