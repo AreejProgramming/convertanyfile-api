@@ -13,68 +13,78 @@ def generate_session_id():
 
 def validate_input(input_str):
     """
-    Validate if input is an IP address or domain name
+    Validate if input is a valid IP address or domain name
     """
-    # IP address regex
-    ip_regex = r'^((25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)$'
+    # IPv4 regex
+    ipv4_regex = r'^((25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)$'
+    # IPv6 regex (simplified)
+    ipv6_regex = r'^([0-9a-fA-F]{1,4}:){7}[0-9a-fA-F]{1,4}$'
     # Domain name regex
     domain_regex = r'^[a-zA-Z0-9][a-zA-Z0-9-]{0,61}[a-zA-Z0-9](?:\.[a-zA-Z]{2,})+$'
     
-    return re.match(ip_regex, input_str) or re.match(domain_regex, input_str)
+    return (re.match(ipv4_regex, input_str) or 
+            re.match(ipv6_regex, input_str) or 
+            re.match(domain_regex, input_str))
 
-def lookup_ip_info(query):
+def resolve_domain_to_ip(domain):
     """
-    Lookup IP information using ip-api.com (free service)
+    Resolve a domain name to its IP address
     """
     try:
-        # If it's a domain, first resolve to IP
-        if not re.match(r'^((25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)$', query):
-            import socket
-            try:
-                ip_address = socket.gethostbyname(query)
-                query = ip_address
-            except:
-                return {"error": "Could not resolve domain to IP address"}
+        import socket
+        ip = socket.gethostbyname(domain)
+        return ip
+    except:
+        return None
+
+def lookup_ip_info(ip):
+    """
+    Lookup information for an IP address using ip-api.com
+    """
+    try:
+        # Using ip-api.com which is free and doesn't require API key
+        url = f"http://ip-api.com/json/{ip}?fields=status,message,country,countryCode,region,regionName,city,zip,lat,lon,timezone,isp,org,as,proxy,hosting,query"
         
-        # Use ip-api.com to get IP information
-        response = requests.get(f"http://ip-api.com/json/{query}?fields=status,message,country,countryCode,region,regionName,city,zip,lat,lon,timezone,isp,org,as,reverse,mobile,proxy,hosting", timeout=10)
+        # Measure response time
+        start_time = time.time()
+        response = requests.get(url, timeout=10)
+        response_time = (time.time() - start_time) * 1000  # milliseconds
         
         if response.status_code == 200:
             data = response.json()
             
             if data.get('status') == 'success':
                 # Determine IP type (IPv4 or IPv6)
-                ip_type = "IPv6" if ':' in query else "IPv4"
+                ip_type = 'IPv6' if ':' in ip else 'IPv4'
                 
                 return {
-                    "query": query,
-                    "ip": data.get("query", query),
+                    "ip": data.get('query'),
                     "type": ip_type,
-                    "country": data.get("country", "Unknown"),
-                    "countryCode": data.get("countryCode", "Unknown"),
-                    "region": data.get("regionName", "Unknown"),
-                    "city": data.get("city", "Unknown"),
-                    "latitude": data.get("lat", 0),
-                    "longitude": data.get("lon", 0),
-                    "timezone": data.get("timezone", "Unknown"),
-                    "isp": data.get("isp", "Unknown"),
-                    "org": data.get("org", "Unknown"),
-                    "as": data.get("as", "Unknown"),
-                    "proxy": data.get("proxy", False),
-                    "hosting": data.get("hosting", False)
+                    "country": data.get('country'),
+                    "countryCode": data.get('countryCode'),
+                    "region": data.get('regionName'),
+                    "city": data.get('city'),
+                    "latitude": data.get('lat'),
+                    "longitude": data.get('lon'),
+                    "timezone": data.get('timezone'),
+                    "isp": data.get('isp'),
+                    "org": data.get('org'),
+                    "as": data.get('as'),
+                    "proxy": data.get('proxy'),
+                    "hosting": data.get('hosting'),
+                    "responseTime": response_time,
+                    "timestamp": datetime.now().isoformat()
                 }
             else:
-                return {"error": data.get("message", "Unknown error")}
+                return {"error": data.get('message', 'Unknown error')}
         else:
             return {"error": f"API request failed with status code {response.status_code}"}
-            
     except Exception as e:
-        print(f"Error looking up IP info: {str(e)}")
         return {"error": str(e)}
 
 def check_ip_address(query):
     """
-    Check IP address information
+    Main function to check IP address or domain
     """
     # Get session ID from environment variable
     session_id = os.environ.get("SESSION_ID", generate_session_id())
@@ -85,19 +95,30 @@ def check_ip_address(query):
     # Initialize results
     results = {
         "status": "processing", 
-        "message": "Looking up IP address...",
+        "message": "Looking up IP address information...",
         "session_id": session_id
     }
     
     try:
-        # Basic input validation
+        # Validate input
         if not query or not validate_input(query):
-            raise ValueError("Invalid IP address or domain name format")
+            raise ValueError("Invalid IP address or domain format")
         
-        print(f"Looking up IP address for {query}")
+        # Check if input is a domain name
+        is_domain = re.match(r'^[a-zA-Z0-9][a-zA-Z0-9-]{0,61}[a-zA-Z0-9](?:\.[a-zA-Z]{2,})+$', query)
+        
+        ip = query
+        if is_domain:
+            # Resolve domain to IP
+            print(f"Resolving domain {query} to IP address...")
+            ip = resolve_domain_to_ip(query)
+            if not ip:
+                raise ValueError(f"Failed to resolve domain {query} to an IP address")
+            print(f"Resolved {query} to {ip}")
         
         # Lookup IP information
-        ip_data = lookup_ip_info(query)
+        print(f"Looking up information for IP {ip}...")
+        ip_data = lookup_ip_info(ip)
         
         if "error" in ip_data:
             raise ValueError(ip_data["error"])
@@ -139,12 +160,12 @@ def check_ip_address(query):
     return results
 
 if __name__ == "__main__":
-    target_query = os.environ.get("TARGET_QUERY")
-    if not target_query:
-        print("ERROR: TARGET_QUERY environment variable not set.")
+    query = os.environ.get("QUERY")
+    if not query:
+        print("ERROR: QUERY environment variable not set.")
         error_result = {
             "status": "error", 
-            "message": "TARGET_QUERY environment variable not set.",
+            "message": "QUERY environment variable not set.",
             "session_id": os.environ.get("SESSION_ID", "unknown")
         }
         
@@ -159,7 +180,7 @@ if __name__ == "__main__":
         print(f"results={json.dumps(error_result)}")
         sys.exit(1)
         
-    ip_results = check_ip_address(target_query)
+    ip_results = check_ip_address(query)
     
     # The results are already printed in the function
     sys.exit(0)
