@@ -39,6 +39,9 @@ def setup_webdriver():
         chrome_options = Options()
         chrome_options.add_argument("--window-size=375,812")  # Mobile viewport size
         chrome_options.add_argument("--user-agent=Mozilla/5.0 (iPhone; CPU iPhone OS 14_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/14.0 Mobile/15E148 Safari/604.1")
+        chrome_options.add_argument("--no-sandbox")
+        chrome_options.add_argument("--disable-dev-shm-usage")
+        chrome_options.add_argument("--disable-gpu")
         
         driver = RemoteWebDriver(
             command_executor=remote_driver_url,
@@ -94,7 +97,7 @@ def check_text_readability(driver, url):
         # Check for font size using JavaScript
         font_size = driver.execute_script("""
             var paragraphs = document.querySelectorAll('p, div, span, h1, h2, h3, h4, h5, h6');
-            if (paragraphs.length === 0) return 0;
+            if (paragraphs.length === 0) return 16;
             
             var totalSize = 0;
             var count = 0;
@@ -107,7 +110,7 @@ def check_text_readability(driver, url):
                 }
             }
             
-            return count > 0 ? totalSize / count : 0;
+            return count > 0 ? totalSize / count : 16;
         """)
         
         # Convert to pixels and check if it's at least 16px
@@ -333,6 +336,46 @@ def calculate_mobile_friendliness_score(checks):
     
     return round(adjusted_score)
 
+def write_results_safely(results, session_id):
+    """
+    Safely write results to file with proper error handling
+    """
+    try:
+        # Try multiple locations in order of preference
+        locations = [
+            f'/tmp/results_{session_id}.json',
+            f'/github/workspace/results_{session_id}.json',
+            f'results_{session_id}.json',
+            'results.json'
+        ]
+        
+        success = False
+        for location in locations:
+            try:
+                # Ensure directory exists
+                directory = os.path.dirname(location)
+                if directory and not os.path.exists(directory):
+                    os.makedirs(directory, exist_ok=True)
+                
+                with open(location, 'w') as f:
+                    json.dump(results, f)
+                print(f"Results successfully written to {location}")
+                success = True
+                break
+            except Exception as e:
+                print(f"Failed to write to {location}: {str(e)}")
+                continue
+        
+        if not success:
+            # Last resort: try to write to stdout
+            print(f"results={json.dumps(results)}")
+            print("WARNING: Could not write results to file, outputting to stdout instead")
+            
+    except Exception as e:
+        print(f"ERROR in write_results_safely: {str(e)}")
+        # Final fallback
+        print(f"results={json.dumps(results)}")
+
 def test_mobile_friendliness(url):
     """
     Main function to test if a website is mobile-friendly
@@ -411,19 +454,7 @@ def test_mobile_friendliness(url):
                 pass
     
     # Always write results to file, even if there was an error
-    try:
-        # Use /tmp directory which should be writable in the Docker container
-        results_file = f'/tmp/results_{session_id}.json'
-        with open(results_file, 'w') as f:
-            json.dump(results, f)
-        print(f"Results successfully written to {results_file}")
-        
-        # Also write to the default location for compatibility
-        with open('results.json', 'w') as f:
-            json.dump(results, f)
-        print("Results also written to results.json")
-    except Exception as file_error:
-        print(f"ERROR writing results file: {str(file_error)}")
+    write_results_safely(results, session_id)
     
     # Always output the results, even if there was an error
     print(f"results={json.dumps(results)}")
@@ -440,14 +471,7 @@ if __name__ == "__main__":
         }
         
         # Write error results to file
-        try:
-            # Use /tmp directory which should be writable in the Docker container
-            error_file = f'/tmp/results_{os.environ.get("SESSION_ID", "unknown")}.json'
-            with open(error_file, 'w') as f:
-                json.dump(error_result, f)
-            print(f"Error results written to {error_file}")
-        except Exception as file_error:
-            print(f"ERROR writing error results file: {str(file_error)}")
+        write_results_safely(error_result, os.environ.get("SESSION_ID", "unknown"))
         
         print(f"results={json.dumps(error_result)}")
         sys.exit(1)
