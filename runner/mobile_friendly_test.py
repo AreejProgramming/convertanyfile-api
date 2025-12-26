@@ -48,7 +48,7 @@ def setup_webdriver():
 
 def check_viewport_configuration(driver, url):
     """
-    Check if the page has a proper viewport meta tag
+    Check if page has a proper viewport meta tag
     """
     try:
         driver.get(url)
@@ -145,7 +145,7 @@ def check_touch_targets(driver, url):
                 var width = rect.width;
                 var height = rect.height;
                 
-                // Check if the element is visible and has a minimum size of 48x48px
+                // Check if element is visible and has a minimum size of 48x48px
                 if (width > 0 && height > 0 && (width < 48 || height < 48)) {
                     return false;
                 }
@@ -209,7 +209,7 @@ def check_content_sizing(driver, url):
 
 def check_plugin_compatibility(driver, url):
     """
-    Check if the page avoids using plugins that are not common on mobile platforms
+    Check if page avoids using plugins that are not common on mobile platforms
     """
     try:
         driver.get(url)
@@ -253,7 +253,7 @@ def check_plugin_compatibility(driver, url):
 
 def check_page_speed(driver, url):
     """
-    Check if the page loads in a reasonable amount of time
+    Check if page loads in a reasonable amount of time
     """
     try:
         start_time = time.time()
@@ -312,7 +312,7 @@ def generate_recommendations(checks):
 
 def calculate_mobile_friendliness_score(checks):
     """
-    Calculate an overall mobile-friendliness score based on the checks
+    Calculate an overall mobile-friendliness score based on checks
     """
     passed_checks = sum(1 for check in checks if check["status"] == "pass")
     total_checks = len(checks)
