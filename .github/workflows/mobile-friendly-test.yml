@@ -15,6 +15,9 @@ on:
 jobs:
   test-mobile-friendly:
     runs-on: ubuntu-latest
+    container: 
+      image: selenium/standalone-chrome:latest
+      options: --shm-size=2gb
     
     steps:
     - name: Checkout repository
@@ -29,22 +32,6 @@ jobs:
       run: |
         python -m pip install --upgrade pip
         pip install requests selenium
-        
-    - name: Install Chrome
-      run: |
-        wget -q -O - https://dl.google.com/linux/linux_signing_key.pub | sudo apt-key add -
-        echo "deb [arch=amd64] http://dl.google.com/linux/chrome/deb/ stable main" | sudo tee /etc/apt/sources.list.d/google-chrome.list
-        sudo apt-get update
-        sudo apt-get install -y google-chrome-stable
-        
-    - name: Install ChromeDriver
-      run: |
-        CHROME_VERSION=$(google-chrome --version | cut -d " " -f3 | cut -d "." -f1)
-        CHROMEDRIVER_VERSION=$(curl -s "https://chromedriver.storage.googleapis.com/LATEST_RELEASE_${CHROME_VERSION}")
-        curl -L -O "https://chromedriver.storage.googleapis.com/${CHROMEDRIVER_VERSION}/chromedriver_linux64.zip"
-        unzip chromedriver_linux64.zip
-        sudo mv chromedriver /usr/local/bin/
-        sudo chmod +x /usr/local/bin/chromedriver
         
     - name: Generate session ID if not provided
       if: github.event.inputs.session_id == ''
@@ -74,9 +61,10 @@ jobs:
       env:
         URL: ${{ github.event.inputs.url }}
         SESSION_ID: ${{ env.SESSION_ID }}
+        REMOTE_DRIVER_URL: http://localhost:4444/wd/hub
       run: |
         echo "Testing mobile-friendliness for $URL"
-        python runner/mobile_friendly_test.py
+        python runner/mobile_friendly_test_docker.py
         
     - name: Process results
       run: |
