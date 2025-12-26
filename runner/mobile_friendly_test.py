@@ -13,6 +13,7 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.common.exceptions import TimeoutException, WebDriverException
+from selenium.webdriver.remote.webdriver import WebDriver as RemoteWebDriver
 
 def generate_session_id():
     return str(uuid.uuid4())
@@ -29,20 +30,23 @@ def validate_url(url):
 
 def setup_webdriver():
     """
-    Set up a headless Chrome webdriver
+    Set up a remote Chrome webdriver for Docker environment
     """
-    chrome_options = Options()
-    chrome_options.add_argument("--headless")
-    chrome_options.add_argument("--no-sandbox")
-    chrome_options.add_argument("--disable-dev-shm-usage")
-    chrome_options.add_argument("--disable-gpu")
-    chrome_options.add_argument("--window-size=375,812")  # Mobile viewport size
-    chrome_options.add_argument("--user-agent=Mozilla/5.0 (iPhone; CPU iPhone OS 14_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/14.0 Mobile/15E148 Safari/604.1")
-    
     try:
-        driver = webdriver.Chrome(options=chrome_options)
+        # For Docker environment, use remote driver
+        remote_driver_url = os.environ.get("REMOTE_DRIVER_URL", "http://localhost:4444/wd/hub")
+        
+        chrome_options = Options()
+        chrome_options.add_argument("--window-size=375,812")  # Mobile viewport size
+        chrome_options.add_argument("--user-agent=Mozilla/5.0 (iPhone; CPU iPhone OS 14_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/14.0 Mobile/15E148 Safari/604.1")
+        
+        driver = RemoteWebDriver(
+            command_executor=remote_driver_url,
+            options=chrome_options
+        )
+        
         return driver
-    except WebDriverException as e:
+    except Exception as e:
         print(f"Error setting up webdriver: {str(e)}")
         return None
 
