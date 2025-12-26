@@ -15,9 +15,6 @@ on:
 jobs:
   lookup-ip:
     runs-on: ubuntu-latest
-    concurrency:
-      group: ip-lookups
-      limit: 10  # Allow up to 10 concurrent lookups
     
     steps:
     - name: Checkout repository
@@ -59,10 +56,10 @@ jobs:
         
     - name: Lookup IP address
       env:
-        TARGET_QUERY: ${{ github.event.inputs.query }}
+        QUERY: ${{ github.event.inputs.query }}
         SESSION_ID: ${{ env.SESSION_ID }}
       run: |
-        echo "Looking up IP address for $TARGET_QUERY"
+        echo "Looking up information for $QUERY"
         python runner/ip_address_lookup.py
         
     - name: Process results
@@ -86,6 +83,8 @@ jobs:
               echo "City: $(jq -r '.data.city' results.json)"
               echo "ISP: $(jq -r '.data.isp' results.json)"
               echo "Organization: $(jq -r '.data.org' results.json)"
+              echo "AS: $(jq -r '.data.as' results.json)"
+              echo "Response Time: $(jq -r '.data.responseTime' results.json)ms"
             else
               echo "Error: $(jq -r '.message' results.json)"
             fi
