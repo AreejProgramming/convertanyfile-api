@@ -412,18 +412,18 @@ def test_mobile_friendliness(url):
     
     # Always write results to file, even if there was an error
     try:
+        # Use /tmp directory which should be writable in the Docker container
+        results_file = f'/tmp/results_{session_id}.json'
+        with open(results_file, 'w') as f:
+            json.dump(results, f)
+        print(f"Results successfully written to {results_file}")
+        
+        # Also write to the default location for compatibility
         with open('results.json', 'w') as f:
             json.dump(results, f)
-        print("Results successfully written to results.json")
+        print("Results also written to results.json")
     except Exception as file_error:
         print(f"ERROR writing results file: {str(file_error)}")
-        # Try to write to a different location as fallback
-        try:
-            with open(f'/tmp/results_{session_id}.json', 'w') as f:
-                json.dump(results, f)
-            print(f"Results written to fallback location: /tmp/results_{session_id}.json")
-        except Exception as fallback_error:
-            print(f"ERROR writing to fallback location: {str(fallback_error)}")
     
     # Always output the results, even if there was an error
     print(f"results={json.dumps(results)}")
@@ -441,9 +441,11 @@ if __name__ == "__main__":
         
         # Write error results to file
         try:
-            with open('results.json', 'w') as f:
+            # Use /tmp directory which should be writable in the Docker container
+            error_file = f'/tmp/results_{os.environ.get("SESSION_ID", "unknown")}.json'
+            with open(error_file, 'w') as f:
                 json.dump(error_result, f)
-            print("Error results written to results.json")
+            print(f"Error results written to {error_file}")
         except Exception as file_error:
             print(f"ERROR writing error results file: {str(file_error)}")
         
