@@ -25,15 +25,10 @@ jobs:
       with:
         python-version: '3.10'
         
-    - name: Install system dependencies
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y chromium-browser chromium-driver xvfb
-        
     - name: Install Python dependencies
       run: |
         python -m pip install --upgrade pip
-        pip install requests selenium webdriver-manager
+        pip install requests beautifulsoup4 lxml
         
     - name: Generate or use session ID
       run: |
@@ -58,13 +53,13 @@ jobs:
         path: session-markers/
         retention-days: 1
         
-    - name: Test mobile-friendliness
+    - name: Test mobile-friendliness with free APIs
       env:
         URL: ${{ github.event.inputs.url }}
         SESSION_ID: ${{ env.SESSION_ID }}
       run: |
         echo "Testing mobile-friendliness for $URL with session ID $SESSION_ID"
-        python runner/mobile_friendly_test.py
+        python runner/mobile_friendly_test_free.py
         
     - name: Upload results
       if: always()
