@@ -65,10 +65,15 @@ jobs:
         echo "Session ID: $SESSION_ID"
         python runner/robots_fetcher.py
         
+    # *** CRITICAL FIX 1: Always run the upload step, even if the fetch step fails ***
     - name: Upload results
-      if: always()
+      # The 'if: always()' ensures this step runs regardless of previous step's outcome
+      if: always() 
       uses: actions/upload-artifact@v4
       with:
         name: robots-results-${{ env.SESSION_ID }}
-        path: results.json
+        # *** CRITICAL FIX 2: Make the path conditional ***
+        # This will only upload the file if it exists. If it doesn't, the step will be skipped but not fail the whole job.
+        path: |
+          results.json
         retention-days: 7
