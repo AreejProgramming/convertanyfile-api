@@ -5,8 +5,9 @@ import time
 import requests
 import xml.etree.ElementTree as ET
 from datetime import datetime
-from urllib.parse import urlparse
+from urllib.parse import urlparse, urljoin
 import xmltodict
+import re
 
 def generate_session_id():
     return f"{int(time.time())}-{os.urandom(4).hex()}"
@@ -17,6 +18,51 @@ def validate_url(url):
         return all([result.scheme, result.netloc])
     except:
         return False
+
+def find_sitemap_url(base_url):
+    """
+    Tries to find the sitemap URL for a given base domain.
+    1. Checks for /sitemap.xml
+    2. Checks robots.txt for a 'Sitemap:' directive.
+    Returns the found sitemap URL or None.
+    """
+    parsed_url = urlparse(base_url)
+    domain = f"{parsed_url.scheme}://{parsed_url.netloc}"
+
+    # Strategy 1: Try the common /sitemap.xml location
+    sitemap_candidate = f"{domain}/sitemap.xml"
+    print(f"  Probing common location: {sitemap_candidate}")
+    try:
+        response = requests.head(sitemap_candidate, timeout=10, allow_redirects=True)
+        if response.status_code == 200:
+            # Do a quick GET to verify it's actually XML
+            verify_response = requests.get(sitemap_candidate, timeout=10)
+            if 'xml' in verify_response.headers.get('Content-Type', '') or verify_response.text.strip().startswith('<?xml'):
+                print(f"  Found sitemap at common location: {sitemap_candidate}")
+                return sitemap_candidate
+    except requests.RequestException:
+        print(f"  Sitemap not found at {sitemap_candidate}")
+
+    # Strategy 2: Parse robots.txt to find the sitemap URL
+    robots_url = f"{domain}/robots.txt"
+    print(f"  Probing robots.txt: {robots_url}")
+    try:
+        response = requests.get(robots_url, timeout=10)
+        if response.status_code == 200:
+            # Use regex to find the Sitemap directive
+            match = re.search(r'^Sitemap:\s*(.*)$', response.text, re.IGNORECASE | re.MULTILINE)
+            if match:
+                found_sitemap = match.group(1).strip()
+                # Ensure the URL is absolute
+                absolute_sitemap = urljoin(domain, found_sitemap)
+                print(f"  Found sitemap in robots.txt: {absolute_sitemap}")
+                return absolute_sitemap
+    except requests.RequestException:
+        print(f"  Could not fetch or parse robots.txt.")
+
+    print("  Could not automatically find a sitemap URL.")
+    return None
+
 
 def fetch_and_parse_sitemap(sitemap_url):
     """
@@ -63,19 +109,36 @@ def fetch_and_parse_sitemap(sitemap_url):
         return []
 
 
-def analyze_sitemap(sitemap_url):
+def analyze_sitemap(initial_url):
     """
     Fetches and analyzes a sitemap or sitemap index.
-    Handles both by recursively fetching child sitemaps.
+    Handles user-friendly input by trying to find the sitemap if a direct URL is not provided.
     """
+    sitemap_url_to_analyze = initial_url
+    parsed_url = urlparse(initial_url)
+    
+    # If the path is empty or just '/', it's likely a root domain, not a sitemap.
+    if not parsed_url.path or parsed_url.path == '/':
+        print("User provided a root domain. Attempting to find sitemap automatically...")
+        discovered_sitemap = find_sitemap_url(initial_url)
+        if discovered_sitemap:
+            sitemap_url_to_analyze = discovered_sitemap
+        else:
+            return {
+                "status": "error",
+                "message": f"Could not find a sitemap for '{initial_url}'. Please provide the full sitemap URL (e.g., {initial_url}/sitemap.xml).",
+                "url": initial_url
+            }
+
     try:
-        print(f"Analyzing initial URL: {sitemap_url}")
-        response = requests.get(sitemap_url, timeout=15)
+        print(f"Analyzing sitemap URL: {sitemap_url_to_analyze}")
+        response = requests.get(sitemap_url_to_analyze, timeout=15)
         response.raise_for_status()
         
         sitemap_dict = xmltodict.parse(response.content)
         
         all_urls = []
+        sitemap_files_processed = 0
         
         # Check if it's a sitemap index
         if 'sitemapindex' in sitemap_dict:
@@ -89,24 +152,26 @@ def analyze_sitemap(sitemap_url):
                 if child_sitemap_url:
                     child_urls = fetch_and_parse_sitemap(child_sitemap_url)
                     all_urls.extend(child_urls)
+                    sitemap_files_processed += 1
         
         # Check if it's a standard sitemap file
         elif 'urlset' in sitemap_dict:
             print("Detected a standard sitemap file.")
-            all_urls = fetch_and_parse_sitemap(sitemap_url)
+            all_urls = fetch_and_parse_sitemap(sitemap_url_to_analyze)
+            sitemap_files_processed = 1
         
         else:
             return {
                 "status": "error",
                 "message": "Invalid sitemap format. Could not find 'urlset' or 'sitemapindex'. The URL might be a regular HTML page.",
-                "url": sitemap_url
+                "url": sitemap_url_to_analyze
             }
 
         if not all_urls:
             return {
                 "status": "error",
                 "message": "Could not extract any valid URLs from the sitemap(s).",
-                "url": sitemap_url
+                "url": sitemap_url_to_analyze
             }
 
         # Process all collected URLs
@@ -125,8 +190,8 @@ def analyze_sitemap(sitemap_url):
         
         return {
             "status": "success",
-            "message": f"Successfully analyzed {len(all_urls)} URLs from {len(sitemap_entries) if 'sitemap_entries' in locals() else 1} sitemap file(s).",
-            "url": sitemap_url,
+            "message": f"Successfully analyzed {len(all_urls)} URLs from {sitemap_files_processed} sitemap file(s).",
+            "url": sitemap_url_to_analyze,
             "stats": stats,
             "urls": all_urls
         }
@@ -135,14 +200,13 @@ def analyze_sitemap(sitemap_url):
         return {
             "status": "error",
             "message": f"Request failed: {str(e)}. The URL may be incorrect or the server may be down.",
-            "url": sitemap_url
+            "url": sitemap_url_to_analyze
         }
     except Exception as e:
-        # This will now catch the initial XML parsing error more gracefully
         return {
             "status": "error",
             "message": f"An unexpected error occurred: {str(e)}. This might be because the URL does not point to a valid XML sitemap file.",
-            "url": sitemap_url
+            "url": sitemap_url_to_analyze
         }
 
 def main():
