@@ -59,7 +59,7 @@ jobs:
         SESSION_ID: ${{ env.SESSION_ID }}
       run: |
         echo "Testing mobile-friendliness for $URL with session ID $SESSION_ID"
-        python runner/mobile_friendly_test_free.py
+        python runner/mobile_friendly_test.py
         
     - name: Upload results
       if: always()
