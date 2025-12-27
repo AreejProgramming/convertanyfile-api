@@ -34,6 +34,15 @@ jobs:
         python -m pip install --upgrade pip
         pip install requests
         
+    - name: Debug environment
+      run: |
+        echo "Current directory: $(pwd)"
+        echo "Files in current directory:"
+        ls -la
+        echo "Session ID: $SESSION_ID"
+        echo "Target: $TARGET"
+        echo "Max hops: $MAX_HOPS"
+        
     - name: Generate session ID if not provided
       if: github.event.inputs.session_id == ''
       run: |
@@ -47,6 +56,7 @@ jobs:
     - name: Set max hops
       run: |
         MAX_HOPS="${{ github.event.inputs.max_hops || '30' }}"
+        echo "MAX_HOPS=$MAX_HOPS" >> $GITHUB_ENV
         echo "Using max hops: $MAX_HOPS"
         
     - name: Create session marker
@@ -75,39 +85,60 @@ jobs:
     - name: Process results
       run: |
         # Check if results file exists
-        if [ -f results.json ]; then
-          echo "Results file found"
-          # Create a copy with session ID in the filename
-          cp results.json traceroute_results_${{ env.SESSION_ID }}.json
+        RESULTS_FILE="results.json"
+        
+        # If the primary results file doesn't exist, check fallback locations
+        if [ ! -f "$RESULTS_FILE" ]; then
+          echo "Primary results file not found, checking fallback locations"
           
-          # Display results summary
-          echo "Results summary:"
-          if command -v jq &> /dev/null; then
-            jq -r '.status' results.json
-            if [ "$(jq -r '.status' results.json)" = "success" ]; then
-              echo "Target: $(jq -r '.target' results.json)"
-              echo "Target IP: $(jq -r '.target_ip' results.json)"
-              echo "Total hops: $(jq -r '.data.totalHops' results.json)"
-              echo "Total time: $(jq -r '.data.totalTime' results.json)ms"
-              echo "Max hops: $(jq -r '.data.maxHops' results.json)"
-              
-              # Display first few hops
-              echo "First 5 hops:"
-              jq -r '.data.hops[:5] | .[] | "Hop \(.hop): \(.ip) - \(.avgTime)ms"' results.json
-            else
-              echo "Error: $(jq -r '.message' results.json)"
-            fi
+          # Check home directory
+          if [ -f ~/results.json ]; then
+            echo "Found results in home directory"
+            cp ~/results.json "$RESULTS_FILE"
+          # Check /tmp directory
+          elif [ -f "/tmp/results_${{ env.SESSION_ID }}.json" ]; then
+            echo "Found results in /tmp directory"
+            cp "/tmp/results_${{ env.SESSION_ID }}.json" "$RESULTS_FILE"
           else
-            echo "jq not available, displaying raw JSON"
-            cat results.json
+            echo "Results file not found in any location"
+            # Create a minimal error result file
+            cat > "$RESULTS_FILE" << EOF
+{
+  "status": "error",
+  "message": "Results file not found",
+  "session_id": "${{ env.SESSION_ID }}"
+}
+EOF
           fi
-        else
-          echo "Results file not found"
-          exit 1
         fi
         
+        # Display results summary
+        echo "Results summary:"
+        if command -v jq &> /dev/null; then
+          jq -r '.status' "$RESULTS_FILE"
+          if [ "$(jq -r '.status' "$RESULTS_FILE")" = "success" ]; then
+            echo "Target: $(jq -r '.target' "$RESULTS_FILE")"
+            echo "Target IP: $(jq -r '.target_ip' "$RESULTS_FILE")"
+            echo "Total hops: $(jq -r '.data.totalHops' "$RESULTS_FILE")"
+            echo "Total time: $(jq -r '.data.totalTime' "$RESULTS_FILE")ms"
+            echo "Max hops: $(jq -r '.data.maxHops' "$RESULTS_FILE")"
+            
+            # Display first few hops
+            echo "First 5 hops:"
+            jq -r '.data.hops[:5] | .[] | "Hop \(.hop): \(.ip) - \(.avgTime)ms"' "$RESULTS_FILE"
+          else
+            echo "Error: $(jq -r '.message' "$RESULTS_FILE")"
+          fi
+        else
+          echo "jq not available, displaying raw JSON"
+          cat "$RESULTS_FILE"
+        fi
+        
+        # Create a copy with session ID in the filename
+        cp "$RESULTS_FILE" "traceroute_results_${{ env.SESSION_ID }}.json"
+        
     - name: Upload results
-      if: always()
+      if: always()  # Always upload results, even if previous steps failed
       uses: actions/upload-artifact@v4
       with:
         name: traceroute-results-${{ env.SESSION_ID }}
