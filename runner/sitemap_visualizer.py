@@ -248,6 +248,10 @@ def main():
     results["session_id"] = results.get("session_id", session_id)
     results["timestamp"] = datetime.now().isoformat()
     
+    # --- DEBUGGING PRINT ---
+    print(f"Final Python results object to be saved: {json.dumps(results)}")
+    # --- END DEBUGGING PRINT ---
+
     try:
         with open('results.json', 'w') as f:
             json.dump(results, f)
