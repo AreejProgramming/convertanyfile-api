@@ -15,6 +15,8 @@ on:
         description: 'Session ID for tracking'
         required: false
         default: ''
+  repository_dispatch:
+    types: [traceroute-request]
 
 jobs:
   trace-route:
@@ -34,6 +36,20 @@ jobs:
         python -m pip install --upgrade pip
         pip install requests
         
+    - name: Extract inputs from workflow_dispatch
+      if: github.event_name == 'workflow_dispatch'
+      run: |
+        echo "TARGET=${{ github.event.inputs.target }}" >> $GITHUB_ENV
+        echo "MAX_HOPS=${{ github.event.inputs.max_hops || '30' }}" >> $GITHUB_ENV
+        echo "SESSION_ID=${{ github.event.inputs.session_id || '' }}" >> $GITHUB_ENV
+        
+    - name: Extract inputs from repository_dispatch
+      if: github.event_name == 'repository_dispatch'
+      run: |
+        echo "TARGET=${{ github.event.client_payload.target }}" >> $GITHUB_ENV
+        echo "MAX_HOPS=30" >> $GITHUB_ENV
+        echo "SESSION_ID=${{ github.event.client_payload.session_id || '' }}" >> $GITHUB_ENV
+        
     - name: Debug environment
       run: |
         echo "Current directory: $(pwd)"
@@ -44,20 +60,9 @@ jobs:
         echo "Max hops: $MAX_HOPS"
         
     - name: Generate session ID if not provided
-      if: github.event.inputs.session_id == ''
+      if: env.SESSION_ID == ''
       run: |
         echo "SESSION_ID=$(date +%s)-$(shuf -i 1000-9999 -n 1)" >> $GITHUB_ENV
-        
-    - name: Use provided session ID
-      if: github.event.inputs.session_id != ''
-      run: |
-        echo "SESSION_ID=${{ github.event.inputs.session_id }}" >> $GITHUB_ENV
-        
-    - name: Set max hops
-      run: |
-        MAX_HOPS="${{ github.event.inputs.max_hops || '30' }}"
-        echo "MAX_HOPS=$MAX_HOPS" >> $GITHUB_ENV
-        echo "Using max hops: $MAX_HOPS"
         
     - name: Create session marker
       run: |
@@ -75,7 +80,7 @@ jobs:
         
     - name: Trace route
       env:
-        TARGET: ${{ github.event.inputs.target }}
+        TARGET: ${{ env.TARGET }}
         MAX_HOPS: ${{ env.MAX_HOPS }}
         SESSION_ID: ${{ env.SESSION_ID }}
       run: |
