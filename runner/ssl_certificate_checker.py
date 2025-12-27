@@ -5,8 +5,7 @@ import sys
 import re
 import ssl
 import socket
-import subprocess
-from datetime import datetime, timedelta
+from datetime import datetime
 from urllib.parse import urlparse
 import uuid
 
@@ -15,215 +14,121 @@ def generate_session_id():
 
 def validate_domain(domain):
     """
-    Validate if input is a valid domain name
+    Validate if input is a valid domain name or URL
     """
+    # Remove protocol if present
+    if domain.startswith(('http://', 'https://')):
+        domain = domain.split('://', 1)[1]
+    
+    # Remove path if present
+    if '/' in domain:
+        domain = domain.split('/', 1)[0]
+    
     # Domain name regex
     domain_regex = r'^[a-zA-Z0-9][a-zA-Z0-9-]{0,61}[a-zA-Z0-9](?:\.[a-zA-Z]{2,})+$'
-    # URL regex
-    url_regex = r'^https?:\/\/(?:[-\w.])+(?:\:[0-9]+)?(?:\/(?:[\w\/_.])*(?:\?(?:[\w&=%.])*)?(?:\#(?:[\w.])*)?)?$'
+    # IPv4 regex
+    ip_regex = r'^((25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)$'
     
-    return (re.match(domain_regex, domain) or re.match(url_regex, domain))
+    return re.match(domain_regex, domain) or re.match(ip_regex, domain)
 
-def get_ssl_certificate_info(domain):
+def get_ssl_certificate_info(domain, port=443, timeout=10):
     """
     Get SSL certificate information for a domain
     """
     try:
-        # Clean domain (remove protocol if present)
-        if domain.startswith(('http://', 'https://')):
-            domain = domain.split('://', 1)[1]
-        
-        # Default port
-        port = 443
-        
-        # Check if port is specified
-        if ':' in domain:
-            domain, port_str = domain.rsplit(':', 1)
-            port = int(port_str)
-        
-        # Get certificate
+        # Create socket connection
         context = ssl.create_default_context()
-        with socket.create_connection((domain, port), timeout=10) as sock:
+        
+        # Measure connection time
+        start_time = time.time()
+        
+        # Connect to the server
+        with socket.create_connection((domain, port), timeout=timeout) as sock:
             with context.wrap_socket(sock, server_hostname=domain) as ssock:
-                cert = ssock.getpeercert(binary_form=True)
-        
-        # Parse certificate
-        cert_info = {}
-        
-        # Get subject
-        subject = {}
-        for item in cert_info['subject']:
-            for key, value in item:
-                subject[key] = value
-        
-        # Get issuer
-        issuer = {}
-        for item in cert_info['issuer']:
-            for key, value in item:
-                issuer[key] = value
-        
-        # Get validity dates
-        not_before = datetime.strptime(cert_info['notBefore'], '%b %d %H:%M:%S %Y %Z')
-        not_after = datetime.strptime(cert_info['notAfter'], '%b %d %H:%M:%S %Y %Z')
-        
-        # Calculate days until expiry
-        days_until_expiry = (not_after - datetime.now()).days
-        
-        # Get serial number
-        serial_number = cert_info.get('serialNumber', '')
-        
-        # Get signature algorithm
-        signature_algorithm = cert_info.get('signatureAlgorithm', '')
-        
-        # Get version
-        version = cert_info.get('version', '')
-        
-        # Get subject alternative names
-        san = []
-        if 'subjectAltName' in cert_info:
-            for item in cert_info['subjectAltName']:
-                if item[0] == 'DNS':
-                    san.append(item[1])
-        
-        # Get key size (using openssl command)
-        try:
-            cmd = f"echo | openssl s_client -connect {domain}:{port} 2>/dev/null | openssl x509 -noout -text | grep 'Public-Key'"
-            result = subprocess.run(cmd, shell=True, capture_output=True, text=True)
-            key_size = 2048  # Default
-            if result.returncode == 0:
-                output = result.stdout
-                if 'RSA' in output:
-                    match = re.search(r'RSA Public-Key: \((\d+) bit\)', output)
-                    if match:
-                        key_size = int(match.group(1))
-        except:
-            key_size = 2048  # Default
-        
-        # Get protocol and cipher suite (using openssl command)
-        try:
-            cmd = f"echo | openssl s_client -connect {domain}:{port} 2>/dev/null | grep 'Protocol'"
-            result = subprocess.run(cmd, shell=True, capture_output=True, text=True)
-            protocol = "TLS 1.2"  # Default
-            if result.returncode == 0:
-                output = result.stdout
-                if 'TLSv1.2' in output:
-                    protocol = "TLS 1.2"
-                elif 'TLSv1.1' in output:
-                    protocol = "TLS 1.1"
-                elif 'TLSv1' in output:
-                    protocol = "TLS 1.0"
-                elif 'SSLv3' in output:
-                    protocol = "SSL 3.0"
-            
-            cmd = f"echo | openssl s_client -connect {domain}:{port} 2>/dev/null | grep 'Cipher'"
-            result = subprocess.run(cmd, shell=True, capture_output=True, text=True)
-            cipher_suite = "TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384"  # Default
-            if result.returncode == 0:
-                output = result.stdout
-                match = re.search(r'Cipher\s*:\s*(.+)', output)
-                if match:
-                    cipher_suite = match.group(1).strip()
-        except:
-            protocol = "TLS 1.2"  # Default
-            cipher_suite = "TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384"  # Default
-        
-        # Check for common vulnerabilities
-        vulnerabilities = []
-        
-        # Check for Heartbleed
-        try:
-            cmd = f"echo | openssl s_client -connect {domain}:{port} 2>/dev/null | grep 'heartbeat'"
-            result = subprocess.run(cmd, shell=True, capture_output=True, text=True)
-            if result.returncode == 0 and 'heartbeat' in result.stdout:
-                vulnerabilities.append({
-                    "name": "Heartbleed",
-                    "status": "Vulnerable",
-                    "severity": "Critical"
-                })
-            else:
-                vulnerabilities.append({
-                    "name": "Heartbleed",
-                    "status": "Not Vulnerable",
-                    "severity": "Safe"
-                })
-        except:
-            vulnerabilities.append({
-                "name": "Heartbleed",
-                "status": "Unknown",
-                "severity": "Unknown"
-            })
-        
-        # Check for POODLE
-        try:
-            cmd = f"echo | openssl s_client -connect {domain}:{port} 2>/dev/null | grep 'Protocol.*SSLv3'"
-            result = subprocess.run(cmd, shell=True, capture_output=True, text=True)
-            if result.returncode == 0 and 'SSLv3' in result.stdout:
-                vulnerabilities.append({
-                    "name": "POODLE",
-                    "status": "Vulnerable",
-                    "severity": "High"
-                })
-            else:
-                vulnerabilities.append({
-                    "name": "POODLE",
-                    "status": "Not Vulnerable",
-                    "severity": "Safe"
-                })
-        except:
-            vulnerabilities.append({
-                "name": "POODLE",
-                "status": "Unknown",
-                "severity": "Unknown"
-            })
-        
-        # Check for BEAST
-        try:
-            cmd = f"echo | openssl s_client -connect {domain}:{port} 2>/dev/null | grep 'Cipher.*CBC'"
-            result = subprocess.run(cmd, shell=True, capture_output=True, text=True)
-            if result.returncode == 0 and 'CBC' in result.stdout:
-                vulnerabilities.append({
-                    "name": "BEAST",
-                    "status": "Vulnerable",
-                    "severity": "Medium"
-                })
-            else:
-                vulnerabilities.append({
-                    "name": "BEAST",
-                    "status": "Not Vulnerable",
-                    "severity": "Safe"
-                })
-        except:
-            vulnerabilities.append({
-                "name": "BEAST",
-                "status": "Unknown",
-                "severity": "Unknown"
-            })
-        
-        # Build certificate info
-        cert_info = {
-            "domain": domain,
-            "isSecure": days_until_expiry > 0,
-            "isValid": days_until_expiry > 0,
-            "certificate": {
-                "issuer": issuer.get('organizationName', ''),
-                "subject": subject.get('commonName', ''),
-                "serialNumber": serial_number,
-                "signatureAlgorithm": signature_algorithm,
-                "version": version,
-                "issuedOn": not_before.strftime('%Y-%m-%d'),
-                "expiresOn": not_after.strftime('%Y-%m-%d'),
-                "daysUntilExpiry": days_until_expiry,
-                "keySize": key_size,
-                "protocol": protocol,
-                "cipherSuite": cipher_suite,
-                "SANs": san
-            },
-            "vulnerabilities": vulnerabilities
+                cert = ssock.getpeercert()
+                connection_time = (time.time() - start_time) * 1000  # milliseconds
+                
+                # Extract certificate information
+                cert_info = {
+                    'subject': dict(x[0] for x in cert['subject']),
+                    'issuer': dict(x[0] for x in cert['issuer']),
+                    'version': cert['version'],
+                    'serialNumber': cert['serialNumber'],
+                    'notBefore': cert['notBefore'],
+                    'notAfter': cert['notAfter'],
+                    'subjectAltName': cert.get('subjectAltName', []),
+                    'connectionTime': connection_time
+                }
+                
+                # Parse dates
+                not_before = datetime.strptime(cert_info['notBefore'], '%b %d %H:%M:%S %Y %Z')
+                not_after = datetime.strptime(cert_info['notAfter'], '%b %d %H:%M:%S %Y %Z')
+                
+                # Calculate days until expiration
+                days_until_expiry = (not_after - datetime.now()).days
+                
+                # Get certificate chain
+                cert_chain = ssock.get_verified_chain()
+                
+                return {
+                    'domain': domain,
+                    'port': port,
+                    'valid': True,
+                    'subject': cert_info['subject'].get('commonName', 'N/A'),
+                    'issuer': cert_info['issuer'].get('organizationName', 'N/A'),
+                    'version': cert_info['version'],
+                    'serialNumber': cert_info['serialNumber'],
+                    'issuedDate': cert_info['notBefore'],
+                    'expiryDate': cert_info['notAfter'],
+                    'daysUntilExpiry': days_until_expiry,
+                    'subjectAltName': cert_info['subjectAltName'],
+                    'connectionTime': connection_time,
+                    'chainLength': len(cert_chain) if cert_chain else 0,
+                    'isSelfSigned': cert_info['issuer'] == cert_info['subject'],
+                    'signatureAlgorithm': cert.get('signatureAlgorithm', 'Unknown'),
+                    'publicKeySize': cert.get('subjectPublicKeyInfo', {}).get('publicKey', {}).get('size', 0)
+                }
+                
+    except socket.gaierror as e:
+        return {
+            'domain': domain,
+            'port': port,
+            'valid': False,
+            'error': f"DNS resolution failed: {str(e)}",
+            'errorType': 'DNS_ERROR'
         }
-        
-        return cert_info
+    except socket.timeout:
+        return {
+            'domain': domain,
+            'port': port,
+            'valid': False,
+            'error': "Connection timeout",
+            'errorType': 'TIMEOUT_ERROR'
+        }
+    except ssl.SSLCertVerificationError as e:
+        return {
+            'domain': domain,
+            'port': port,
+            'valid': False,
+            'error': f"Certificate verification failed: {str(e)}",
+            'errorType': 'CERT_ERROR'
+        }
+    except ConnectionRefusedError:
+        return {
+            'domain': domain,
+            'port': port,
+            'valid': False,
+            'error': "Connection refused",
+            'errorType': 'CONNECTION_ERROR'
+        }
     except Exception as e:
-        return {"error": str(e)}
+        return {
+            'domain': domain,
+            'port': port,
+            'valid': False,
+            'error': f"Unexpected error: {str(e)}",
+            'errorType': 'UNKNOWN_ERROR'
+        }
 
 def check_ssl_certificate(domain):
     """
@@ -243,24 +148,46 @@ def check_ssl_certificate(domain):
     }
     
     try:
-        # Validate input
+        # Validate and clean domain
         if not domain or not validate_domain(domain):
-            raise ValueError("Invalid domain name format")
+            raise ValueError("Invalid domain name or URL format")
         
-        # Get SSL certificate information
-        print(f"Getting SSL certificate information for {domain}...")
-        ssl_data = get_ssl_certificate_info(domain)
+        # Clean domain (remove protocol and path)
+        clean_domain = domain.strip()
+        if clean_domain.startswith(('http://', 'https://')):
+            clean_domain = clean_domain.split('://', 1)[1]
+        if '/' in clean_domain:
+            clean_domain = clean_domain.split('/', 1)[0]
         
-        if "error" in ssl_data:
-            raise ValueError(ssl_data["error"])
+        print(f"Cleaned domain: {clean_domain}")
+        
+        # Check SSL certificate
+        print(f"Checking SSL certificate for {clean_domain}...")
+        cert_data = get_ssl_certificate_info(clean_domain)
+        
+        # Add additional analysis
+        if cert_data.get('valid'):
+            # Check if certificate is expiring soon
+            if cert_data['daysUntilExpiry'] < 30:
+                cert_data['expiryWarning'] = 'Certificate expires soon'
+            elif cert_data['daysUntilExpiry'] < 7:
+                cert_data['expiryWarning'] = 'Certificate expires very soon'
+            
+            # Check if it's a self-signed certificate
+            if cert_data['isSelfSigned']:
+                cert_data['warning'] = 'Self-signed certificate'
+            
+            # Check key size
+            if cert_data['publicKeySize'] < 2048:
+                cert_data['warning'] = 'Weak key size detected'
         
         # Create final results
         results = {
             "status": "success",
-            "domain": domain,
+            "domain": clean_domain,
             "timestamp": time.time(),
             "session_id": session_id,
-            "data": ssl_data
+            "data": cert_data
         }
         
     except Exception as e:
