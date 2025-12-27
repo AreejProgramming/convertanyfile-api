@@ -1,0 +1,102 @@
+name: Port Scanner
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: 'IP address or domain name to scan'
+        required: true
+        default: 'scanme.nmap.org'
+      session_id:
+        description: 'Session ID for tracking'
+        required: false
+        default: ''
+
+jobs:
+  scan-ports:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.9'
+        
+    - name: Generate session ID if not provided
+      if: github.event.inputs.session_id == ''
+      run: |
+        echo "SESSION_ID=$(date +%s)-$(shuf -i 1000-9999 -n 1)" >> $GITHUB_ENV
+        
+    - name: Use provided session ID
+      if: github.event.inputs.session_id != ''
+      run: |
+        echo "SESSION_ID=${{ github.event.inputs.session_id }}" >> $GITHUB_ENV
+        
+    - name: Create session marker
+      run: |
+        echo "Session ID: $SESSION_ID"
+        echo "Session marker created at $(date)"
+        mkdir -p session-markers
+        echo "Session ID: $SESSION_ID" > session-markers/session-marker-$SESSION_ID.txt
+        
+    - name: Upload session marker
+      uses: actions/upload-artifact@v4
+      with:
+        name: session-marker-${{ env.SESSION_ID }}
+        path: session-markers/
+        retention-days: 1
+        
+    - name: Scan ports
+      env:
+        TARGET: ${{ github.event.inputs.target }}
+        SESSION_ID: ${{ env.SESSION_ID }}
+      run: |
+        echo "Scanning ports on $TARGET"
+        python runner/port_scanner.py
+        
+    - name: Process results
+      run: |
+        # Check if results file exists
+        if [ -f results.json ]; then
+          echo "Results file found"
+          # Create a copy with session ID in the filename
+          cp results.json port_scan_results_${{ env.SESSION_ID }}.json
+          
+          # Display results summary
+          echo "Results summary:"
+          if command -v jq &> /dev/null; then
+            jq -r '.status' results.json
+            if [ "$(jq -r '.status' results.json)" = "success" ]; then
+              echo "Target: $(jq -r '.target' results.json)"
+              echo "Total ports: $(jq -r '.summary.total' results.json)"
+              echo "Open ports: $(jq -r '.summary.open' results.json)"
+              echo "Closed ports: $(jq -r '.summary.closed' results.json)"
+              echo "Filtered ports: $(jq -r '.summary.filtered' results.json)"
+              echo "Errors: $(jq -r '.summary.errors' results.json)"
+              
+              echo "Open ports details:"
+              jq -r '.results[] | select(.status == "Open") | "Port \(.port): \(.service) - \(.description) (\(.responseTime)ms)"' results.json
+            else
+              echo "Error: $(jq -r '.message' results.json)"
+            fi
+          else
+            echo "jq not available, displaying raw JSON"
+            cat results.json
+          fi
+        else
+          echo "Results file not found"
+          exit 1
+        fi
+        
+    - name: Upload results
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: port-scan-results-${{ env.SESSION_ID }}
+        path: |
+          results.json
+          port_scan_results_${{ env.SESSION_ID }}.json
+        retention-days: 7
