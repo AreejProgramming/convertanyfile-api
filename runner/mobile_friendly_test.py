@@ -133,7 +133,7 @@ def check_text_readability(content, url):
                         has_small_font = True
                         break
                 except:
-                    continue
+                        continue
         
         if not has_small_font:
             return {
@@ -414,6 +414,40 @@ def calculate_mobile_friendliness_score(checks):
     
     return round(adjusted_score)
 
+def write_results_safely(results, session_id):
+    """
+    Safely write results to file with proper error handling
+    """
+    try:
+        # Try multiple locations for the results file
+        locations = [
+            f'results_{session_id}.json',
+            'results.json',
+            f'/tmp/results_{session_id}.json'
+        ]
+        
+        for location in locations:
+            try:
+                directory = os.path.dirname(location)
+                if directory and not os.path.exists(directory):
+                    os.makedirs(directory, exist_ok=True)
+                
+                with open(location, 'w') as f:
+                    json.dump(results, f)
+                print(f"Results successfully written to {location}")
+                return
+            except Exception as e:
+                print(f"Failed to write to {location}: {str(e)}")
+                continue
+                
+        # Final fallback - output to stdout
+        print(f"results={json.dumps(results)}")
+        
+    except Exception as e:
+        print(f"ERROR in write_results_safely: {str(e)}")
+        # Final fallback - output to stdout
+        print(f"results={json.dumps(results)}")
+
 def test_mobile_friendliness(url):
     """
     Main function to test if a website is mobile-friendly using free APIs
@@ -483,36 +517,8 @@ def test_mobile_friendliness(url):
             "session_id": session_id
         }
     
-    # Always write results to file, even if there was an error
-    try:
-        # Try multiple locations for the results file
-        locations = [
-            f'results_{session_id}.json',
-            'results.json',
-            f'/tmp/results_{session_id}.json'
-        ]
-        
-        for location in locations:
-            try:
-                directory = os.path.dirname(location)
-                if directory and not os.path.exists(directory):
-                    os.makedirs(directory, exist_ok=True)
-                
-                with open(location, 'w') as f:
-                    json.dump(results, f)
-                print(f"Results successfully written to {location}")
-                return
-            except Exception as e:
-                print(f"Failed to write to {location}: {str(e)}")
-                continue
-                
-        # Final fallback - output to stdout
-        print(f"results={json.dumps(results)}")
-        
-    except Exception as file_error:
-        print(f"ERROR writing results file: {str(file_error)}")
-        # Final fallback - output to stdout
-        print(f"results={json.dumps(results)}")
+    # Write results using the helper function
+    write_results_safely(results, session_id)
     
     return results
 
@@ -526,37 +532,12 @@ if __name__ == "__main__":
             "session_id": os.environ.get("SESSION_ID", "unknown")
         }
         
-        # Write error results to file
-        try:
-            session_id = os.environ.get("SESSION_ID", "unknown")
-            locations = [
-                f'results_{session_id}.json',
-                'results.json',
-                f'/tmp/results_{session_id}.json'
-            ]
-            
-            for location in locations:
-                try:
-                    directory = os.path.dirname(location)
-                    if directory and not os.path.exists(directory):
-                        os.makedirs(directory, exist_ok=True)
-                    
-                    with open(location, 'w') as f:
-                        json.dump(error_result, f)
-                    print(f"Error results written to {location}")
-                    return
-                except Exception as e:
-                    print(f"Failed to write to {location}: {str(e)}")
-                    continue
-            
-            print(f"results={json.dumps(error_result)}")
-        except Exception as file_error:
-            print(f"ERROR writing error results file: {str(file_error)}")
-            print(f"results={json.dumps(error_result)}")
+        # Write error results using the helper function
+        write_results_safely(error_result, os.environ.get("SESSION_ID", "unknown"))
         
         sys.exit(1)
         
     mobile_results = test_mobile_friendliness(url)
     
-    # The results are already printed in the function
+    # The results are already handled in the function
     sys.exit(0)
