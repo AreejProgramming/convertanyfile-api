@@ -7,6 +7,10 @@ on:
         description: 'Target domain or IP address to trace'
         required: true
         default: 'example.com'
+      max_hops:
+        description: 'Maximum number of hops to trace'
+        required: false
+        default: '30'
       session_id:
         description: 'Session ID for tracking'
         required: false
@@ -40,6 +44,11 @@ jobs:
       run: |
         echo "SESSION_ID=${{ github.event.inputs.session_id }}" >> $GITHUB_ENV
         
+    - name: Set max hops
+      run: |
+        MAX_HOPS="${{ github.event.inputs.max_hops || '30' }}"
+        echo "Using max hops: $MAX_HOPS"
+        
     - name: Create session marker
       run: |
         echo "Session ID: $SESSION_ID"
@@ -57,9 +66,10 @@ jobs:
     - name: Trace route
       env:
         TARGET: ${{ github.event.inputs.target }}
+        MAX_HOPS: ${{ env.MAX_HOPS }}
         SESSION_ID: ${{ env.SESSION_ID }}
       run: |
-        echo "Tracing route to $TARGET"
+        echo "Tracing route to $TARGET with max hops: $MAX_HOPS"
         python runner/traceroute_tool.py
         
     - name: Process results
@@ -76,9 +86,10 @@ jobs:
             jq -r '.status' results.json
             if [ "$(jq -r '.status' results.json)" = "success" ]; then
               echo "Target: $(jq -r '.target' results.json)"
+              echo "Target IP: $(jq -r '.target_ip' results.json)"
               echo "Total hops: $(jq -r '.data.totalHops' results.json)"
               echo "Total time: $(jq -r '.data.totalTime' results.json)ms"
-              echo "Execution time: $(jq -r '.data.executionTime' results.json)ms"
+              echo "Max hops: $(jq -r '.data.maxHops' results.json)"
               
               # Display first few hops
               echo "First 5 hops:"
