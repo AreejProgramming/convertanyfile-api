@@ -1,148 +1,59 @@
-name: Traceroute Tool
+name: Sitemap Visualizer
 
 on:
   workflow_dispatch:
     inputs:
-      target:
-        description: 'Target domain or IP address to trace'
+      url:
+        description: 'Sitemap URL to analyze'
         required: true
-        default: 'example.com'
-      max_hops:
-        description: 'Maximum number of hops to trace'
-        required: false
-        default: '30'
+        type: string
       session_id:
-        description: 'Session ID for tracking'
+        description: 'Unique session identifier'
+        required: true
+        type: string
+      max_hops:
+        description: 'Maximum number of hops to follow'
         required: false
-        default: ''
+        type: string
+        default: '3'
 
 jobs:
-  trace-route:
+  analyze:
     runs-on: ubuntu-latest
-    
     steps:
-    - name: Checkout repository
-      uses: actions/checkout@v4
-      
-    - name: Set up Python
-      uses: actions/setup-python@v4
-      with:
-        python-version: '3.9'
-        
-    - name: Install dependencies
-      run: |
-        python -m pip install --upgrade pip
-        pip install requests
-        
-    - name: Debug environment
-      run: |
-        echo "Current directory: $(pwd)"
-        echo "Files in current directory:"
-        ls -la
-        echo "Session ID: $SESSION_ID"
-        echo "Target: $TARGET"
-        echo "Max hops: $MAX_HOPS"
-        
-    - name: Generate session ID if not provided
-      if: github.event.inputs.session_id == ''
-      run: |
-        echo "SESSION_ID=$(date +%s)-$(shuf -i 1000-9999 -n 1)" >> $GITHUB_ENV
-        
-    - name: Use provided session ID
-      if: github.event.inputs.session_id != ''
-      run: |
-        echo "SESSION_ID=${{ github.event.inputs.session_id }}" >> $GITHUB_ENV
-        
-    - name: Set max hops
-      run: |
-        MAX_HOPS="${{ github.event.inputs.max_hops || '30' }}"
-        echo "MAX_HOPS=$MAX_HOPS" >> $GITHUB_ENV
-        echo "Using max hops: $MAX_HOPS"
-        
-    - name: Create session marker
-      run: |
-        echo "Session ID: $SESSION_ID"
-        echo "Session marker created at $(date)"
-        mkdir -p session-markers
-        echo "Session ID: $SESSION_ID" > session-markers/session-marker-$SESSION_ID.txt
-        
-    - name: Upload session marker
-      uses: actions/upload-artifact@v4
-      with:
-        name: session-marker-${{ env.SESSION_ID }}
-        path: session-markers/
-        retention-days: 1
-        
-    - name: Trace route
-      env:
-        TARGET: ${{ github.event.inputs.target }}
-        MAX_HOPS: ${{ env.MAX_HOPS }}
-        SESSION_ID: ${{ env.SESSION_ID }}
-      run: |
-        echo "Tracing route to $TARGET with max hops: $MAX_HOPS"
-        python runner/traceroute_tool.py
-        
-    - name: Process results
-      run: |
-        # Check if results file exists
-        RESULTS_FILE="results.json"
-        
-        # If the primary results file doesn't exist, check fallback locations
-        if [ ! -f "$RESULTS_FILE" ]; then
-          echo "Primary results file not found, checking fallback locations"
-          
-          # Check home directory
-          if [ -f ~/results.json ]; then
-            echo "Found results in home directory"
-            cp ~/results.json "$RESULTS_FILE"
-          # Check /tmp directory
-          elif [ -f "/tmp/results_${{ env.SESSION_ID }}.json" ]; then
-            echo "Found results in /tmp directory"
-            cp "/tmp/results_${{ env.SESSION_ID }}.json" "$RESULTS_FILE"
-          else
-            echo "Results file not found in any location"
-            # Create a minimal error result file
-            cat > "$RESULTS_FILE" << EOF
-{
-  "status": "error",
-  "message": "Results file not found",
-  "session_id": "${{ env.SESSION_ID }}"
-}
-EOF
-          fi
-        fi
-        
-        # Display results summary
-        echo "Results summary:"
-        if command -v jq &> /dev/null; then
-          jq -r '.status' "$RESULTS_FILE"
-          if [ "$(jq -r '.status' "$RESULTS_FILE")" = "success" ]; then
-            echo "Target: $(jq -r '.target' "$RESULTS_FILE")"
-            echo "Target IP: $(jq -r '.target_ip' "$RESULTS_FILE")"
-            echo "Total hops: $(jq -r '.data.totalHops' "$RESULTS_FILE")"
-            echo "Total time: $(jq -r '.data.totalTime' "$RESULTS_FILE")ms"
-            echo "Max hops: $(jq -r '.data.maxHops' "$RESULTS_FILE")"
-            
-            # Display first few hops
-            echo "First 5 hops:"
-            jq -r '.data.hops[:5] | .[] | "Hop \(.hop): \(.ip) - \(.avgTime)ms"' "$RESULTS_FILE"
-          else
-            echo "Error: $(jq -r '.message' "$RESULTS_FILE")"
-          fi
-        else
-          echo "jq not available, displaying raw JSON"
-          cat "$RESULTS_FILE"
-        fi
-        
-        # Create a copy with session ID in the filename
-        cp "$RESULTS_FILE" "traceroute_results_${{ env.SESSION_ID }}.json"
-        
-    - name: Upload results
-      if: always()  # Always upload results, even if previous steps failed
-      uses: actions/upload-artifact@v4
-      with:
-        name: traceroute-results-${{ env.SESSION_ID }}
-        path: |
-          results.json
-          traceroute_results_${{ env.SESSION_ID }}.json
-        retention-days: 7
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.9'
+
+      - name: Install dependencies
+        run: |
+          pip install requests beautifulsoup4 lxml
+
+      - name: Analyze sitemap
+        run: |
+          python scripts/sitemap_analyzer.py \
+            --url "${{ github.event.inputs.url }}" \
+            --session-id "${{ github.event.inputs.session_id }}" \
+            --max-hops "${{ github.event.inputs.max_hops }}"
+
+      - name: Upload results
+        uses: actions/upload-artifact@v3
+        with:
+          name: sitemap-results-${{ github.event.inputs.session_id }}
+          path: results/
+          retention-days: 1
+
+      - name: Create session marker
+        run: |
+          echo "Session marker for ${{ github.event.inputs.session_id }}" > session-marker-${{ github.event.inputs.session_id }}.txt
+
+      - name: Upload session marker
+        uses: actions/upload-artifact@v3
+        with:
+          name: session-marker-${{ github.event.inputs.session_id }}
+          path: session-marker-${{ github.event.inputs.session_id }}.txt
+          retention-days: 1
