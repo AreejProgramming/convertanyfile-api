@@ -1,0 +1,75 @@
+name: Sitemap Visualizer Tool
+
+on:
+  workflow_dispatch:
+    inputs:
+      url:
+        description: 'Sitemap URL to analyze'
+        required: true
+        default: 'https://www.google.com/sitemap.xml'
+      session_id:
+        description: 'Session ID for tracking'
+        required: false
+        default: ''
+
+jobs:
+  analyze-sitemap:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.9'
+        
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install requests xmltodict
+        
+    - name: Generate session ID if not provided
+      if: github.event.inputs.session_id == ''
+      run: |
+        echo "SESSION_ID=$(date +%s)-$(shuf -i 1000-9999 -n 1)" >> $GITHUB_ENV
+        echo "SESSION_ID=${{ env.SESSION_ID }}" >> $GITHUB_ENV
+        
+    - name: Use provided session ID
+      if: github.event.inputs.session_id != ''
+      run: |
+        echo "SESSION_ID=${{ github.event.inputs.session_id }}" >> $GITHUB_ENV
+        
+    - name: Create session marker
+      run: |
+        echo "Session ID: $SESSION_ID"
+        echo "Session marker created at $(date)"
+        mkdir -p session-markers
+        echo "Session ID: $SESSION_ID" > session-markers/session-marker-$SESSION_ID.txt
+        
+    - name: Upload session marker
+      uses: actions/upload-artifact@v4
+      with:
+        name: session-marker-${{ env.SESSION_ID }}
+        path: session-markers/
+        retention-days: 1
+        
+    - name: Analyze sitemap
+      env:
+        URL: ${{ github.event.inputs.url }}
+        SESSION_ID: ${{ env.SESSION_ID }}
+      run: |
+        echo "Analyzing sitemap for: $URL"
+        echo "Session ID: $SESSION_ID"
+        python runner/sitemap_visualizer.py
+        
+    - name: Upload results
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: sitemap-results-${{ env.SESSION_ID }}
+        path: |
+          results.json
+        retention-days: 7
