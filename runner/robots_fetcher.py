@@ -1,6 +1,8 @@
 import os
 import json
 import sys
+import time  # <-- ADD THIS LINE
+
 import requests
 from datetime import datetime
 from urllib.parse import urlparse
