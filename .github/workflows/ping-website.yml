@@ -15,6 +15,7 @@ on:
 jobs:
   ping-website:
     runs-on: ubuntu-latest
+    timeout-minutes: 5 # Added timeout for safety
     
     steps:
     - name: Checkout repository
@@ -64,45 +65,10 @@ jobs:
         echo "Session ID: $SESSION_ID"
         python runner/ping_website.py
         
-    - name: Process results
-      run: |
-        # Check if results file exists
-        if [ -f results.json ]; then
-          echo "Results file found"
-          # Create a copy with session ID in the filename
-          cp results.json ping_results_${{ env.SESSION_ID }}.json
-          
-          # Display results summary
-          echo "Results summary:"
-          if command -v jq &> /dev/null; then
-            jq -r '.status' results.json
-            if [ "$(jq -r '.status' results.json)" = "success" ]; then
-              echo "URL: $(jq -r '.url' results.json)"
-              echo "Status: $(jq -r '.status' results.json)"
-              echo "Latency: $(jq -r '.latency' results.json)ms"
-              echo "Status Code: $(jq -r '.statusCode' results.json)"
-              echo "Status Text: $(jq -r '.statusText' results.json)"
-              echo "IP Address: $(jq -r '.ipAddress' results.json)"
-              echo "Server: $(jq -r '.server' results.json)"
-              echo "Location: $(jq -r '.location' results.json)"
-            else
-              echo "Error: $(jq -r '.message' results.json)"
-            fi
-          else
-            echo "jq not available, displaying raw JSON"
-            cat results.json
-          fi
-        else
-          echo "Results file not found"
-          exit 1
-        fi
-        
     - name: Upload results
       if: always()
       uses: actions/upload-artifact@v4
       with:
         name: ping-results-${{ env.SESSION_ID }}
-        path: |
-          results.json
-          ping_results_${{ env.SESSION_ID }}.json
+        path: results.json # The Python script saves the file as 'results.json'
         retention-days: 7
