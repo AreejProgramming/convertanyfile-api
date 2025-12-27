@@ -18,88 +18,130 @@ def validate_url(url):
     except:
         return False
 
-def analyze_sitemap(sitemap_url):
+def fetch_and_parse_sitemap(sitemap_url):
     """
-    Fetches and analyzes a sitemap from a given URL.
-    Handles both sitemap files and sitemap indexes.
+    Fetches and parses a single sitemap file (not an index).
+    Returns a list of URLs.
     """
+    print(f"  Fetching sitemap: {sitemap_url}")
     try:
         response = requests.get(sitemap_url, timeout=15)
         response.raise_for_status()
         
-        # Parse the XML content
-        try:
-            # Use xmltodict for easier parsing
-            sitemap_dict = xmltodict.parse(response.content)
-        except Exception as e:
-            return {
-                "status": "error",
-                "message": f"Failed to parse XML: {str(e)}",
-                "url": sitemap_url
-            }
+        sitemap_dict = xmltodict.parse(response.content)
         
-        # Check if it's a sitemap index or a sitemap file
-        if 'sitemapindex' in sitemap_dict:
-            return {
-                "status": "error",
-                "message": "Sitemap indexes are not directly supported yet. Please provide a direct sitemap URL.",
-                "url": sitemap_url
-            }
-        elif 'urlset' in sitemap_dict:
-            # It's a standard sitemap
-            urlset = sitemap_dict['urlset']['url']
-            if not isinstance(urlset, list):
-                urlset = [urlset] # Ensure it's a list even with one entry
-                
-            urls = []
-            change_freq_counts = {"daily": 0, "weekly": 0, "monthly": 0, "yearly": 0, "always": 0, "never": 0}
+        if 'urlset' not in sitemap_dict:
+            print(f"  Warning: Sitemap at {sitemap_url} does not contain a 'urlset'. Skipping.")
+            return []
+
+        urlset = sitemap_dict['urlset'].get('url', [])
+        if not isinstance(urlset, list):
+            urlset = [urlset]
+
+        urls = []
+        for entry in urlset:
+            loc = entry.get('loc', '')
+            lastmod = entry.get('lastmod', '')
+            changefreq = entry.get('changefreq', 'not specified').lower()
+            priority = entry.get('priority', '0.5')
             
-            for entry in urlset:
-                loc = entry.get('loc', '')
-                lastmod = entry.get('lastmod', '')
-                changefreq = entry.get('changefreq', 'not specified').lower()
-                priority = entry.get('priority', '0.5')
-                
+            if loc: # Ensure loc is not empty
                 urls.append({
                     "loc": loc,
                     "lastmod": lastmod,
                     "changefreq": changefreq,
                     "priority": priority
                 })
-                
-                if changefreq in change_freq_counts:
-                    change_freq_counts[changefreq] += 1
+        
+        return urls
 
-            stats = {
-                "totalUrls": len(urls),
-                "lastUpdated": max([u['lastmod'] for u in urls if u['lastmod']] or ['N/A']),
-                "changeFrequencies": change_freq_counts
-            }
-            
-            return {
-                "status": "success",
-                "message": f"Successfully analyzed {len(urls)} URLs.",
-                "url": sitemap_url,
-                "stats": stats,
-                "urls": urls
-            }
+    except requests.exceptions.RequestException as e:
+        print(f"  Error fetching sitemap {sitemap_url}: {str(e)}")
+        return [] # Return empty list on error to not break the whole process
+    except Exception as e:
+        print(f"  Error parsing sitemap {sitemap_url}: {str(e)}")
+        return []
+
+
+def analyze_sitemap(sitemap_url):
+    """
+    Fetches and analyzes a sitemap or sitemap index.
+    Handles both by recursively fetching child sitemaps.
+    """
+    try:
+        print(f"Analyzing initial URL: {sitemap_url}")
+        response = requests.get(sitemap_url, timeout=15)
+        response.raise_for_status()
+        
+        sitemap_dict = xmltodict.parse(response.content)
+        
+        all_urls = []
+        
+        # Check if it's a sitemap index
+        if 'sitemapindex' in sitemap_dict:
+            print("Detected a sitemap index. Processing child sitemaps...")
+            sitemap_entries = sitemap_dict['sitemapindex'].get('sitemap', [])
+            if not isinstance(sitemap_entries, list):
+                sitemap_entries = [sitemap_entries]
+
+            for sitemap_entry in sitemap_entries:
+                child_sitemap_url = sitemap_entry.get('loc')
+                if child_sitemap_url:
+                    child_urls = fetch_and_parse_sitemap(child_sitemap_url)
+                    all_urls.extend(child_urls)
+        
+        # Check if it's a standard sitemap file
+        elif 'urlset' in sitemap_dict:
+            print("Detected a standard sitemap file.")
+            all_urls = fetch_and_parse_sitemap(sitemap_url)
+        
         else:
             return {
                 "status": "error",
-                "message": "Invalid sitemap format. Could not find 'urlset' or 'sitemapindex'.",
+                "message": "Invalid sitemap format. Could not find 'urlset' or 'sitemapindex'. The URL might be a regular HTML page.",
                 "url": sitemap_url
             }
+
+        if not all_urls:
+            return {
+                "status": "error",
+                "message": "Could not extract any valid URLs from the sitemap(s).",
+                "url": sitemap_url
+            }
+
+        # Process all collected URLs
+        change_freq_counts = {"daily": 0, "weekly": 0, "monthly": 0, "yearly": 0, "always": 0, "never": 0, "not specified": 0}
+        
+        for url_entry in all_urls:
+            changefreq = url_entry.get('changefreq', 'not specified')
+            if changefreq in change_freq_counts:
+                change_freq_counts[changefreq] += 1
+
+        stats = {
+            "totalUrls": len(all_urls),
+            "lastUpdated": max([u['lastmod'] for u in all_urls if u['lastmod']] or ['N/A']),
+            "changeFrequencies": change_freq_counts
+        }
+        
+        return {
+            "status": "success",
+            "message": f"Successfully analyzed {len(all_urls)} URLs from {len(sitemap_entries) if 'sitemap_entries' in locals() else 1} sitemap file(s).",
+            "url": sitemap_url,
+            "stats": stats,
+            "urls": all_urls
+        }
             
     except requests.exceptions.RequestException as e:
         return {
             "status": "error",
-            "message": f"Request failed: {str(e)}",
+            "message": f"Request failed: {str(e)}. The URL may be incorrect or the server may be down.",
             "url": sitemap_url
         }
     except Exception as e:
+        # This will now catch the initial XML parsing error more gracefully
         return {
             "status": "error",
-            "message": f"An unexpected error occurred: {str(e)}",
+            "message": f"An unexpected error occurred: {str(e)}. This might be because the URL does not point to a valid XML sitemap file.",
             "url": sitemap_url
         }
 
