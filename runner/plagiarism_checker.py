@@ -90,21 +90,6 @@ def calculate_sequence_matcher(text1, text2):
     """
     return difflib.SequenceMatcher(None, normalize_text(text1), normalize_text(text2)).ratio()
 
-def find_longest_common_substring(text1, text2):
-    """
-    Find the longest common substring between two texts
-    """
-    text1 = normalize_text(text1)
-    text2 = normalize_text(text2)
-    
-    # Use difflib to find matching blocks
-    matcher = difflib.SequenceMatcher(None, text1, text2)
-    match = matcher.find_longest_match(0, len(text1), 0, len(text2))
-    
-    if match.size > 0:
-        return text1[match.a:match.a + match.size]
-    return ""
-
 def check_sentence_similarity(input_sentence, source_sentence):
     """
     Check similarity between two sentences using multiple methods
@@ -203,15 +188,18 @@ def check_plagiarism_accurate(text, exclude_quotes=False, check_type="comprehens
         # Get sample sources
         sources_data = get_sample_sources()
         
-        # Find matches
-        matches = []
+        # Track sentence-level matches
+        sentence_matches = []
+        matched_sentence_indices = set()
         total_similarity = 0
-        matched_sentences = 0
         
         for source in sources_data:
             source_sentences = split_into_sentences(source["content"])
             
             for input_idx, input_sentence in enumerate(input_sentences):
+                if input_idx in matched_sentence_indices:
+                    continue  # Skip already matched sentences
+                    
                 for source_idx, source_sentence in enumerate(source_sentences):
                     # Skip if excluding quotes and sentence is in quotes
                     if exclude_quotes and ('"' in input_sentence or "'" in input_sentence):
@@ -221,42 +209,82 @@ def check_plagiarism_accurate(text, exclude_quotes=False, check_type="comprehens
                     
                     # Consider it a match if similarity is above threshold
                     if similarity >= 0.7:  # 70% similarity threshold
-                        matches.append({
+                        sentence_matches.append({
                             "url": source["url"],
                             "title": source["title"],
                             "similarity": round(similarity * 100, 1),
                             "userTextFragment": input_sentence,
                             "sourceTextFragment": source_sentence,
                             "inputSentenceIndex": input_idx,
-                            "sourceSentenceIndex": source_idx
+                            "sourceSentenceIndex": source_idx,
+                            "words": len(input_sentence.split())
                         })
                         total_similarity += similarity
-                        matched_sentences += 1
+                        matched_sentence_indices.add(input_idx)
+                        break  # Move to next input sentence once matched
+        
+        # Calculate detailed statistics
+        total_sentences = len(input_sentences)
+        matched_sentences = len(matched_sentence_indices)
+        unique_sentences = total_sentences - matched_sentences
+        
+        # Calculate word-level statistics
+        total_words = word_count
+        matched_words = sum(match["words"] for match in sentence_matches)
+        unique_words = total_words - matched_words
         
         # Calculate overall plagiarism score
-        if len(input_sentences) > 0:
+        if total_sentences > 0:
             # Base score on percentage of sentences that match
-            sentence_match_ratio = matched_sentences / len(input_sentences)
+            sentence_match_ratio = matched_sentences / total_sentences
             # Also consider average similarity of matches
-            avg_similarity = total_similarity / max(len(matches), 1)
+            avg_similarity = total_similarity / max(len(sentence_matches), 1)
             # Combine both metrics
             plagiarism_score = round((sentence_match_ratio * 0.6 + avg_similarity * 0.4) * 100, 1)
         else:
             plagiarism_score = 0
         
+        # Calculate unique score
+        unique_score = round(100 - plagiarism_score, 1)
+        
+        # Determine risk level
+        if plagiarism_score < 15:
+            risk_level = "Low"
+            risk_color = "#10b981"  # Green
+        elif plagiarism_score < 40:
+            risk_level = "Medium"
+            risk_color = "#f59e0b"  # Yellow
+        elif plagiarism_score < 70:
+            risk_level = "High"
+            risk_color = "#ef4444"  # Red
+        else:
+            risk_level = "Very High"
+            risk_color = "#991b1b"  # Dark Red
+        
         # Sort matches by similarity (highest first)
-        matches.sort(key=lambda x: x["similarity"], reverse=True)
+        sentence_matches.sort(key=lambda x: x["similarity"], reverse=True)
         
         # Limit to top matches
-        matches = matches[:10]
+        sentence_matches = sentence_matches[:10]
         
         return {
             "score": plagiarism_score,
-            "wordCount": word_count,
+            "uniqueScore": unique_score,
+            "riskLevel": risk_level,
+            "riskColor": risk_color,
+            "wordCount": total_words,
             "charCount": text_length,
-            "sources": matches,
-            "totalSentences": len(input_sentences),
-            "matchedSentences": matched_sentences
+            "totalSentences": total_sentences,
+            "matchedSentences": matched_sentences,
+            "uniqueSentences": unique_sentences,
+            "matchedWords": matched_words,
+            "uniqueWords": unique_words,
+            "sources": sentence_matches,
+            "analysis": {
+                "sentenceMatchPercentage": round((matched_sentences / total_sentences) * 100, 1) if total_sentences > 0 else 0,
+                "wordMatchPercentage": round((matched_words / total_words) * 100, 1) if total_words > 0 else 0,
+                "averageSimilarity": round(total_similarity / max(len(sentence_matches), 1) * 100, 1) if sentence_matches else 0
+            }
         }
         
     except Exception as e:
