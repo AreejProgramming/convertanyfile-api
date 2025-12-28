@@ -1,3 +1,5 @@
+# File: .github/workflows/website-metadata-extractor.yml
+
 name: Website Metadata Extractor
 
 on:
@@ -60,7 +62,7 @@ jobs:
         SESSION_ID: ${{ env.SESSION_ID }}
       run: |
         echo "Extracting metadata from $URL"
-        python runner/website_metadata_extractor.py
+        python website_metadata_extractor.py
         
     - name: Process results
       run: |
@@ -81,7 +83,7 @@ jobs:
               echo "Keywords: $(jq -r '.data.keywords | join(\", \")' results.json)"
               echo "Open Graph: $(jq -r '.data.openGraph.title' results.json)"
               echo "Twitter: $(jq -r '.data.twitter.title' results.json)"
-              echo "Schema: $(jq -r '.data.schema."@type"' results.json)"
+              echo "Schema: $(jq -r '.data.schema.\"@type\"' results.json)"
               echo "Images: $(jq -r '.data.images | length' results.json)"
               echo "Links: $(jq -r '.data.links | length' results.json)"
             else
