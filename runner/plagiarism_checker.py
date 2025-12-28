@@ -46,9 +46,14 @@ def split_into_phrases(text, min_length=5, max_length=10):
     words = text.split()
     phrases = []
     
+    # Limit the number of phrases to prevent excessive processing
+    max_phrases = min(100, len(words) * 2)
+    
     # Generate phrases of different lengths
     for length in range(min_length, max_length + 1):
         for i in range(len(words) - length + 1):
+            if len(phrases) >= max_phrases:
+                break
             phrase = ' '.join(words[i:i+length])
             phrases.append(phrase)
     
@@ -117,8 +122,15 @@ def check_phrase_similarity(input_phrases, source_phrases):
     best_input_phrase = ""
     best_source_phrase = ""
     
+    # Limit the number of phrase comparisons to prevent timeouts
+    max_comparisons = 500
+    comparison_count = 0
+    
     for input_phrase in input_phrases:
         for source_phrase in source_phrases:
+            if comparison_count >= max_comparisons:
+                break
+                
             # Check for exact match first
             if normalize_text(input_phrase) == normalize_text(source_phrase):
                 return 1.0, input_phrase, source_phrase
@@ -130,6 +142,11 @@ def check_phrase_similarity(input_phrases, source_phrases):
                 max_similarity = similarity
                 best_input_phrase = input_phrase
                 best_source_phrase = source_phrase
+                
+            comparison_count += 1
+        
+        if comparison_count >= max_comparisons:
+            break
     
     return max_similarity, best_input_phrase, best_source_phrase
 
@@ -220,8 +237,9 @@ def check_plagiarism_comprehensive(text, exclude_quotes=False, check_type="compr
     Check plagiarism using comprehensive text analysis
     """
     try:
-        # Simulate processing time
-        time.sleep(1)
+        # Track start time for timeout handling
+        start_time = time.time()
+        max_processing_time = 240  # 4 minutes to stay well under the 5-minute timeout
         
         # Extract text characteristics
         text_length = len(text)
@@ -243,7 +261,20 @@ def check_plagiarism_comprehensive(text, exclude_quotes=False, check_type="compr
         matched_sentence_indices = set()
         matched_phrase_indices = set()
         
-        for source in sources_data:
+        # Limit the number of sources to check based on text length
+        max_sources_to_check = min(10, len(sources_data))
+        if word_count < 100:
+            max_sources_to_check = min(5, len(sources_data))
+        
+        # Shuffle sources to get a diverse sample
+        random.shuffle(sources_data)
+        
+        for source in sources_data[:max_sources_to_check]:
+            # Check if we're approaching the timeout
+            if time.time() - start_time > max_processing_time:
+                print(f"Approaching timeout, stopping analysis after checking {len(exact_matches) + len(sentence_matches) + len(phrase_matches)} matches")
+                break
+                
             source_sentences = split_into_sentences(source["content"])
             source_phrases = split_into_phrases(source["content"])
             
@@ -264,6 +295,10 @@ def check_plagiarism_comprehensive(text, exclude_quotes=False, check_type="compr
             for input_idx, input_sentence in enumerate(input_sentences):
                 if input_idx in matched_sentence_indices:
                     continue  # Skip already matched sentences
+                
+                # Check if we're approaching the timeout
+                if time.time() - start_time > max_processing_time:
+                    break
                 
                 for source_idx, source_sentence in enumerate(source_sentences):
                     # Skip if excluding quotes and sentence is in quotes
