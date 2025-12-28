@@ -1,0 +1,122 @@
+name: URL Shortener
+
+on:
+  workflow_dispatch:
+    inputs:
+      original_url:
+        description: 'Original URL to shorten'
+        required: true
+      custom_alias:
+        description: 'Custom alias for the short URL'
+        required: false
+        default: ''
+      password_protected:
+        description: 'Password protect the link'
+        required: false
+        default: 'false'
+      expiration_date:
+        description: 'Expiration date (YYYY-MM-DD)'
+        required: false
+        default: ''
+      track_analytics:
+        description: 'Track analytics for the link'
+        required: false
+        default: 'true'
+      session_id:
+        description: 'Session ID for tracking'
+        required: false
+        default: ''
+
+jobs:
+  shorten-url:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.9'
+        
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install qrcode[pil]
+        
+    - name: Generate session ID if not provided
+      if: github.event.inputs.session_id == ''
+      run: |
+        echo "SESSION_ID=$(date +%s)-$(shuf -i 1000-9999 -n 1)" >> $GITHUB_ENV
+        
+    - name: Use provided session ID
+      if: github.event.inputs.session_id != ''
+      run: |
+        echo "SESSION_ID=${{ github.event.inputs.session_id }}" >> $GITHUB_ENV
+        
+    - name: Create session marker
+      run: |
+        echo "Session ID: $SESSION_ID"
+        echo "Session marker created at $(date)"
+        mkdir -p session-markers
+        echo "Session ID: $SESSION_ID" > session-markers/session-marker-$SESSION_ID.txt
+        
+    - name: Upload session marker
+      uses: actions/upload-artifact@v4
+      with:
+        name: session-marker-${{ env.SESSION_ID }}
+        path: session-markers/
+        retention-days: 1
+        
+    - name: Shorten URL
+      env:
+        ORIGINAL_URL: ${{ github.event.inputs.original_url }}
+        CUSTOM_ALIAS: ${{ github.event.inputs.custom_alias }}
+        PASSWORD_PROTECTED: ${{ github.event.inputs.password_protected }}
+        EXPIRATION_DATE: ${{ github.event.inputs.expiration_date }}
+        TRACK_ANALYTICS: ${{ github.event.inputs.track_analytics }}
+        SESSION_ID: ${{ env.SESSION_ID }}
+      run: |
+        echo "Shortening URL: $ORIGINAL_URL"
+        python runner/url_shortener.py
+        
+    - name: Process results
+      run: |
+        # Check if results file exists
+        if [ -f results.json ]; then
+          echo "Results file found"
+          # Create a copy with session ID in the filename
+          cp results.json url_shortener_results_${{ env.SESSION_ID }}.json
+          
+          # Display results summary
+          echo "Results summary:"
+          if command -v jq &> /dev/null; then
+            jq -r '.status' results.json
+            if [ "$(jq -r '.status' results.json)" = "success" ]; then
+              echo "Original URL: $(jq -r '.original_url' results.json)"
+              echo "Short URL: $(jq -r '.short_url' results.json)"
+              echo "Short Code: $(jq -r '.short_code' results.json)"
+              echo "Password Protected: $(jq -r '.password_protected' results.json)"
+              echo "Track Analytics: $(jq -r '.track_analytics' results.json)"
+            else
+              echo "Error: $(jq -r '.message' results.json)"
+            fi
+          else
+            echo "jq not available, displaying raw JSON"
+            cat results.json
+          fi
+        else
+          echo "Results file not found"
+          exit 1
+        fi
+        
+    - name: Upload results
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: url-shortener-results-${{ env.SESSION_ID }}
+        path: |
+          results.json
+          url_shortener_results_${{ env.SESSION_ID }}.json
+        retention-days: 7
