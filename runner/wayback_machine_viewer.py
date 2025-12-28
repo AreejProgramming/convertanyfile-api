@@ -60,7 +60,7 @@ def fetch_wayback_data(url):
         if not data or len(data) < 2:
             return {"error": "No data found for this URL"}
         
-        # Parse the data (first row is headers)
+        # Parse data (first row is headers)
         headers = data[0]
         snapshots = []
         
@@ -68,7 +68,7 @@ def fetch_wayback_data(url):
             if len(row) < len(headers):
                 continue
                 
-            # Create a dictionary for the row
+            # Create a dictionary for row
             snapshot_data = dict(zip(headers, row))
             
             # Parse timestamp
@@ -109,7 +109,7 @@ def fetch_wayback_data(url):
             size = len(digest) * 10  # Rough estimate
             
             snapshots.append({
-                "date": date,
+                "date": date.isoformat() if hasattr(date, 'isoformat') else str(date),
                 "status": status,
                 "size": f"{size} KB",
                 "url": snapshot_url,
@@ -191,20 +191,27 @@ def check_wayback(url):
     # Always write results to file, even if there was an error
     try:
         with open('results.json', 'w') as f:
-            json.dump(results, f)
+            json.dump(results, f, ensure_ascii=False)  # Handle special characters
         print("Results successfully written to results.json")
     except Exception as file_error:
         print(f"ERROR writing results file: {str(file_error)}")
         # Try to write to a different location as fallback
         try:
             with open(f'/tmp/results_{session_id}.json', 'w') as f:
-                json.dump(results, f)
+                json.dump(results, f, ensure_ascii=False)  # Handle special characters
             print(f"Results written to fallback location: /tmp/results_{session_id}.json")
         except Exception as fallback_error:
             print(f"ERROR writing to fallback location: {str(fallback_error)}")
     
     # Always output the results, even if there was an error
-    print(f"results={json.dumps(results)}")
+    try:
+        results_json = json.dumps(results, ensure_ascii=False)  # Handle special characters
+        print(f"results={results_json}")
+    except Exception as json_error:
+        print(f"ERROR converting results to JSON: {str(json_error)}")
+        # Fallback to simple string output
+        print(f"results={str(results)}")
+    
     return results
 
 if __name__ == "__main__":
@@ -220,12 +227,18 @@ if __name__ == "__main__":
         # Write error results to file
         try:
             with open('results.json', 'w') as f:
-                json.dump(error_result, f)
+                json.dump(error_result, f, ensure_ascii=False)  # Handle special characters
             print("Error results written to results.json")
         except Exception as file_error:
             print(f"ERROR writing error results file: {str(file_error)}")
         
-        print(f"results={json.dumps(error_result)}")
+        try:
+            error_json = json.dumps(error_result, ensure_ascii=False)  # Handle special characters
+            print(f"results={error_json}")
+        except Exception as json_error:
+            print(f"ERROR converting error to JSON: {str(json_error)}")
+            print(f"results={str(error_result)}")
+        
         sys.exit(1)
         
     wayback_results = check_wayback(url)
