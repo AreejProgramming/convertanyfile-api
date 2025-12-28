@@ -8,8 +8,14 @@ import hashlib
 import qrcode
 import io
 import base64
+import string
+import random
 from datetime import datetime, timedelta
 from urllib.parse import urlparse
+
+# Simple in-memory database for demonstration
+# In production, this would be a real database
+URL_DATABASE = {}
 
 def generate_session_id():
     return str(uuid.uuid4())
@@ -26,17 +32,23 @@ def validate_url(url):
 
 def generate_short_code(custom_alias=None):
     """
-    Generate a short code for the URL
+    Generate a short code for URL
     """
     if custom_alias and re.match(r'^[a-zA-Z0-9_-]+$', custom_alias):
+        # Check if alias already exists
+        if custom_alias in URL_DATABASE:
+            raise ValueError(f"Custom alias '{custom_alias}' is already taken")
         return custom_alias
     
     # Generate a random 6-character code
-    return ''.join(random.choices(string.ascii_letters + string.digits, k=6))
+    while True:
+        code = ''.join(random.choices(string.ascii_letters + string.digits, k=6))
+        if code not in URL_DATABASE:
+            return code
 
 def generate_qr_code(url):
     """
-    Generate a QR code for the URL
+    Generate a QR code for URL
     """
     qr = qrcode.QRCode(
         version=1,
@@ -55,6 +67,29 @@ def generate_qr_code(url):
     img_str = base64.b64encode(buffer.getvalue()).decode()
     
     return img_str
+
+def create_redirect_html(short_url, original_url):
+    """
+    Create HTML file for URL redirection
+    """
+    html_content = f"""
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta http-equiv="refresh" content="0; url={original_url}">
+    <title>Redirecting...</title>
+    <script>
+        // JavaScript redirect as fallback
+        window.location.href = "{original_url}";
+    </script>
+</head>
+<body>
+    <p>Redirecting to <a href="{original_url}">{original_url}</a>...</p>
+</body>
+</html>
+    """
+    return html_content
 
 def check_url_shortener(original_url, custom_alias=None, password_protected=False, expiration_date=None, track_analytics=True):
     """
@@ -81,7 +116,7 @@ def check_url_shortener(original_url, custom_alias=None, password_protected=Fals
         # Generate short code
         short_code = generate_short_code(custom_alias)
         
-        # Create shortened URL
+        # Create shortened URL (using a real domain in production)
         short_url = f"https://short.ly/{short_code}"
         
         # Generate QR code
@@ -94,6 +129,28 @@ def check_url_shortener(original_url, custom_alias=None, password_protected=Fals
                 expiration_timestamp = datetime.strptime(expiration_date, "%Y-%m-%d").timestamp()
             except:
                 expiration_timestamp = (datetime.now() + timedelta(days=30)).timestamp()
+        
+        # Store in database
+        URL_DATABASE[short_code] = {
+            "original_url": original_url,
+            "short_url": short_url,
+            "short_code": short_code,
+            "password_protected": password_protected,
+            "expiration_timestamp": expiration_timestamp,
+            "track_analytics": track_analytics,
+            "created_at": time.time(),
+            "clicks": 0,
+            "analytics": {
+                "clicks": 0,
+                "referrers": {},
+                "countries": {},
+                "devices": {},
+                "browsers": {}
+            }
+        }
+        
+        # Create redirect HTML file
+        redirect_html = create_redirect_html(short_url, original_url)
         
         # Create final results
         results = {
@@ -108,13 +165,8 @@ def check_url_shortener(original_url, custom_alias=None, password_protected=Fals
             "created_at": time.time(),
             "session_id": session_id,
             "clicks": 0,
-            "analytics": {
-                "clicks": 0,
-                "referrers": {},
-                "countries": {},
-                "devices": {},
-                "browsers": {}
-            }
+            "analytics": URL_DATABASE[short_code]["analytics"],
+            "redirect_html": redirect_html
         }
         
     except Exception as e:
@@ -140,14 +192,11 @@ def check_url_shortener(original_url, custom_alias=None, password_protected=Fals
         except Exception as fallback_error:
             print(f"ERROR writing to fallback location: {str(fallback_error)}")
     
-    # Always output the results, even if there was an error
+    # Always output results, even if there was an error
     print(f"results={json.dumps(results)}")
     return results
 
 if __name__ == "__main__":
-    import random
-    import string
-    
     original_url = os.environ.get("ORIGINAL_URL")
     custom_alias = os.environ.get("CUSTOM_ALIAS", "")
     password_protected = os.environ.get("PASSWORD_PROTECTED", "false").lower() == "true"
