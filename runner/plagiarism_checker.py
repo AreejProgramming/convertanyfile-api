@@ -18,7 +18,7 @@ def validate_text(text):
     """
     return text and text.strip() and len(text.strip()) > 10
 
-def check_plagiarism_smallseo(text, options=None):
+def check_plagiarism_smallseo(text, exclude_quotes=False, check_type="comprehensive"):
     """
     Check plagiarism using SmallSEOTools API simulation
     """
@@ -41,8 +41,21 @@ def check_plagiarism_smallseo(text, options=None):
         if text.count('"') > 10:
             base_score += 2  # Many quotes might indicate citations
             
+        # Adjust score based on exclude_quotes option
+        if exclude_quotes and text.count('"') > 0:
+            # If excluding quotes, reduce the score
+            base_score = max(0, base_score - 5)
+            
+        # Adjust score based on check_type
+        if check_type == "academic":
+            # Academic check might be more strict
+            base_score += 5
+        elif check_type == "web":
+            # Web check might be less strict for common phrases
+            base_score -= 3
+            
         # Add some randomness
-        score = min(base_score + random.randint(0, 15), 35)
+        score = min(max(0, base_score + random.randint(0, 15)), 35)
         
         # Generate mock sources
         sources = []
@@ -96,8 +109,14 @@ def check_plagiarism_service(text):
     # Get session ID from environment variable
     session_id = os.environ.get("SESSION_ID", generate_session_id())
     
+    # Get additional options
+    exclude_quotes = os.environ.get("EXCLUDE_QUOTES", "false").lower() == "true"
+    check_type = os.environ.get("CHECK_TYPE", "comprehensive")
+    
     print(f"Starting plagiarism check for text of length {len(text)}")
     print(f"Session ID: {session_id}")
+    print(f"Exclude quotes: {exclude_quotes}")
+    print(f"Check type: {check_type}")
     
     # Initialize results
     results = {
@@ -113,7 +132,7 @@ def check_plagiarism_service(text):
         
         # Check plagiarism
         print(f"Checking plagiarism for text of length {len(text)}")
-        plagiarism_data = check_plagiarism_smallseo(text)
+        plagiarism_data = check_plagiarism_smallseo(text, exclude_quotes, check_type)
         
         if "error" in plagiarism_data:
             raise ValueError(plagiarism_data["error"])
