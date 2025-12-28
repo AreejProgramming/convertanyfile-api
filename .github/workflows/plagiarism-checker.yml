@@ -11,6 +11,14 @@ on:
         description: 'Session ID for tracking'
         required: false
         default: ''
+      exclude_quotes:
+        description: 'Whether to exclude quotes from the check'
+        required: false
+        default: 'false'
+      check_type:
+        description: 'Type of plagiarism check to perform'
+        required: false
+        default: 'comprehensive'
 
 jobs:
   plagiarism-check:
@@ -58,8 +66,12 @@ jobs:
       env:
         TEXT: ${{ github.event.inputs.text }}
         SESSION_ID: ${{ env.SESSION_ID }}
+        EXCLUDE_QUOTES: ${{ github.event.inputs.exclude_quotes }}
+        CHECK_TYPE: ${{ github.event.inputs.check_type }}
       run: |
         echo "Checking plagiarism for text"
+        echo "Exclude quotes: $EXCLUDE_QUOTES"
+        echo "Check type: $CHECK_TYPE"
         python runner/plagiarism_checker.py
         
     - name: Process results
