@@ -1,0 +1,113 @@
+name: Plagiarism Checker
+
+on:
+  workflow_dispatch:
+    inputs:
+      text:
+        description: 'Text to check for plagiarism'
+        required: true
+        default: 'This is a sample text to check for plagiarism.'
+      session_id:
+        description: 'Session ID for tracking'
+        required: false
+        default: ''
+
+jobs:
+  plagiarism-check:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.9'
+        
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install requests
+        
+    - name: Generate session ID if not provided
+      if: github.event.inputs.session_id == ''
+      run: |
+        echo "SESSION_ID=$(date +%s)-$(shuf -i 1000-9999 -n 1)" >> $GITHUB_ENV
+        
+    - name: Use provided session ID
+      if: github.event.inputs.session_id != ''
+      run: |
+        echo "SESSION_ID=${{ github.event.inputs.session_id }}" >> $GITHUB_ENV
+        
+    - name: Create session marker
+      run: |
+        echo "Session ID: $SESSION_ID"
+        echo "Session marker created at $(date)"
+        mkdir -p session-markers
+        echo "Session ID: $SESSION_ID" > session-markers/session-marker-$SESSION_ID.txt
+        
+    - name: Upload session marker
+      uses: actions/upload-artifact@v4
+      with:
+        name: session-marker-${{ env.SESSION_ID }}
+        path: session-markers/
+        retention-days: 1
+        
+    - name: Check Plagiarism
+      env:
+        TEXT: ${{ github.event.inputs.text }}
+        SESSION_ID: ${{ env.SESSION_ID }}
+      run: |
+        echo "Checking plagiarism for text"
+        python runner/plagiarism_checker.py
+        
+    - name: Process results
+      run: |
+        # Check if results file exists
+        if [ -f results.json ]; then
+          echo "Results file found"
+          # Create a copy with session ID in the filename
+          cp results.json plagiarism_results_${{ env.SESSION_ID }}.json
+          
+          # Display results summary
+          echo "Results summary:"
+          if command -v jq &> /dev/null; then
+            STATUS=$(jq -r '.status' results.json)
+            echo "Status: $STATUS"
+            
+            if [ "$STATUS" = "success" ]; then
+              SCORE=$(jq -r '.data.score' results.json)
+              WORD_COUNT=$(jq -r '.data.wordCount' results.json)
+              CHAR_COUNT=$(jq -r '.data.charCount' results.json)
+              SOURCES_COUNT=$(jq -r '.data.sources | length' results.json)
+              
+              echo "Score: $SCORE%"
+              echo "Word Count: $WORD_COUNT"
+              echo "Character Count: $CHAR_COUNT"
+              echo "Sources Found: $SOURCES_COUNT"
+              
+              echo "First few sources:"
+              jq -r '.data.sources[:3] | .[] | "Title: \(.title), URL: \(.url), Similarity: \(.similarity)%"' results.json
+            else
+              ERROR=$(jq -r '.message' results.json)
+              echo "Error: $ERROR"
+            fi
+          else
+            echo "jq not available, displaying raw JSON"
+            cat results.json
+          fi
+        else
+          echo "Results file not found"
+          exit 1
+        fi
+        
+    - name: Upload results
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: plagiarism-results-${{ env.SESSION_ID }}
+        path: |
+          results.json
+          plagiarism_results_${{ env.SESSION_ID }}.json
+        retention-days: 7
