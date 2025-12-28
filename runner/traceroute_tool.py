@@ -1,220 +1,154 @@
-#!/usr/bin/env python3
 import os
-import sys
 import json
 import time
-import socket
-import subprocess
+import sys
 import re
-import shutil
+import subprocess
+import uuid
 from datetime import datetime
 
 def generate_session_id():
-    """Generate a unique session ID"""
-    return f"{int(time.time())}-{os.getpid()}"
+    return str(uuid.uuid4())
 
-def validate_target(target):
-    """Validate if the target is a valid domain or IP address"""
-    if not target:
-        return False
-    
-    # Remove protocol and path if present
-    clean_target = target.strip()
-    if clean_target.startswith(('http://', 'https://')):
-        clean_target = clean_target.split('://', 1)[1]
-    if '/' in clean_target:
-        clean_target = clean_target.split('/', 1)[0]
-    
-    # Check if it's a valid IP address or domain
-    try:
-        socket.gethostbyname(clean_target)
-        return True
-    except socket.gaierror:
-        return False
-
-def get_target_ip(target):
-    """Get the IP address of the target"""
-    try:
-        return socket.gethostbyname(target)
-    except socket.gaierror:
-        return None
-
-def trace_route_simple(target, max_hops=30):
+def validate_input(input_str):
     """
-    Perform a simple traceroute using the system's traceroute command
-    This is more compatible with GitHub Actions environment
+    Validate if input is a valid IP address or domain name
     """
-    print(f"Performing traceroute to {target} with max {max_hops} hops")
+    # IPv4 regex
+    ipv4_regex = r'^((25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)$'
+    # IPv6 regex (simplified)
+    ipv6_regex = r'^([0-9a-fA-F]{1,4}:){7}[0-9a-fA-F]{1,4}$'
+    # Domain name regex
+    domain_regex = r'^[a-zA-Z0-9][a-zA-Z0-9-]{0,61}[a-zA-Z0-9](?:\.[a-zA-Z]{2,})+$'
     
-    # Determine the traceroute command based on the OS
-    if os.name == 'nt':  # Windows
-        cmd = ['tracert', '-h', str(max_hops), target]
-    else:  # Unix/Linux
-        cmd = ['traceroute', '-m', str(max_hops), target]
-    
+    return (re.match(ipv4_regex, input_str) or 
+            re.match(ipv6_regex, input_str) or 
+            re.match(domain_regex, input_str))
+
+def run_traceroute(target):
+    """
+    Run traceroute command and parse the output
+    """
     try:
-        # Run the traceroute command
+        # Use traceroute command (Linux/Mac) or tracert (Windows)
+        if sys.platform.startswith('win'):
+            cmd = ['tracert', target]
+        else:
+            cmd = ['traceroute', target]
+        
+        # Run the command with timeout
         result = subprocess.run(
             cmd, 
             capture_output=True, 
             text=True, 
-            timeout=60  # Timeout after 60 seconds
+            timeout=60
         )
         
         if result.returncode != 0:
-            print(f"Traceroute command failed with return code {result.returncode}")
-            print(f"Error output: {result.stderr}")
-            return []
+            return {"error": f"Traceroute failed: {result.stderr}"}
         
-        # Parse the traceroute output
-        hops = parse_traceroute_output(result.stdout)
-        return hops
+        # Parse the output
+        hops = []
+        lines = result.stdout.split('\n')
+        
+        for line in lines:
+            # Skip empty lines and header
+            if not line.strip() or line.startswith('traceroute to'):
+                continue
+                
+            # Parse hop information
+            hop_match = re.match(r'^\s*(\d+)\s+(.*)$', line)
+            if hop_match:
+                hop_num = int(hop_match.group(1))
+                hop_info = hop_match.group(2)
+                
+                # Extract IP addresses and hostnames
+                ip_match = re.search(r'(\d+\.\d+\.\d+\.\d+)', hop_info)
+                ip = ip_match.group(1) if ip_match else "Unknown"
+                
+                # Extract hostname (if available)
+                hostname_match = re.search(r'([a-zA-Z0-9.-]+)\s+\(', hop_info)
+                hostname = hostname_match.group(1) if hostname_match else "Unknown"
+                
+                # Extract times (ms)
+                times = []
+                time_matches = re.findall(r'(\d+\.\d+)\s*ms', hop_info)
+                for time_match in time_matches:
+                    times.append(float(time_match))
+                
+                # If no times found, check for asterisks
+                if not times:
+                    asterisk_count = hop_info.count('*')
+                    if asterisk_count >= 3:
+                        times = ["*", "*", "*"]
+                    else:
+                        times = ["Timeout"]
+                
+                # Calculate average time (if numeric)
+                avg_time = 0
+                if times and times[0] != "*":
+                    numeric_times = [t for t in times if isinstance(t, float)]
+                    if numeric_times:
+                        avg_time = sum(numeric_times) / len(numeric_times)
+                
+                hops.append({
+                    "hop": hop_num,
+                    "ip": ip,
+                    "hostname": hostname,
+                    "times": times,
+                    "avgTime": round(avg_time, 2) if avg_time else 0,
+                    "status": "success" if times and times[0] != "*" else "timeout"
+                })
+        
+        return {"hops": hops}
         
     except subprocess.TimeoutExpired:
-        print("Traceroute command timed out")
-        return []
+        return {"error": "Traceroute timed out. Please try again."}
     except Exception as e:
-        print(f"Error running traceroute: {str(e)}")
-        return []
+        return {"error": f"Error running traceroute: {str(e)}"}
 
-def parse_traceroute_output(output):
-    """Parse the output of the traceroute command"""
-    hops = []
-    lines = output.strip().split('\n')
-    
-    # Skip the first line (usually just the target)
-    for i, line in enumerate(lines[1:], 1):
-        # Skip empty lines
-        if not line.strip():
-            continue
-            
-        # Parse hop information
-        hop_info = parse_hop_line(line, i)
-        if hop_info:
-            hops.append(hop_info)
-    
-    return hops
-
-def parse_hop_line(line, hop_num):
-    """Parse a single hop line from traceroute output"""
-    # Remove leading whitespace
-    line = line.strip()
-    
-    # Skip lines that don't start with a hop number
-    if not line or not line[0].isdigit():
-        return None
-    
-    # Extract the hop number
-    hop_match = re.match(r'^(\d+)', line)
-    if not hop_match:
-        return None
-    
-    hop_number = int(hop_match.group(1))
-    
-    # Extract IP addresses and hostnames
-    # This regex matches IP addresses and hostnames
-    ip_pattern = r'(\d+\.\d+\.\d+\.\d+|\S+\.\S+)'
-    matches = re.findall(ip_pattern, line)
-    
-    if not matches:
-        return None
-    
-    # The first match is usually the IP address or hostname
-    ip_or_hostname = matches[0]
-    
-    # Determine if it's an IP address or hostname
-    if re.match(r'^\d+\.\d+\.\d+\.\d+$', ip_or_hostname):
-        ip = ip_or_hostname
-        hostname = ip  # Use IP as hostname if no hostname is provided
-    else:
-        hostname = ip_or_hostname
-        # Try to resolve the hostname to an IP
-        try:
-            ip = socket.gethostbyname(hostname)
-        except socket.gaierror:
-            ip = hostname  # Use hostname as IP if resolution fails
-    
-    # Extract time measurements (in ms)
-    time_pattern = r'(\d+\.?\d*)\s*ms'
-    time_matches = re.findall(time_pattern, line)
-    
-    times = []
-    for time_str in time_matches[:3]:  # Take only the first 3 measurements
-        try:
-            times.append(float(time_str))
-        except ValueError:
-            pass
-    
-    # Calculate average time
-    avg_time = sum(times) / len(times) if times else 0
-    
-    return {
-        'hop': hop_number,
-        'ip': ip,
-        'hostname': hostname,
-        'times': times,
-        'avgTime': avg_time,
-        'status': 'success' if times else 'timeout'
-    }
-
-def trace_route(target, max_hops=30, timeout=2):
+def check_traceroute(target):
     """
-    Main function to trace route to target
+    Main function to check traceroute
     """
     # Get session ID from environment variable
     session_id = os.environ.get("SESSION_ID", generate_session_id())
     
-    print(f"Starting traceroute to: {target}")
+    print(f"Starting traceroute for: {target}")
     print(f"Session ID: {session_id}")
-    print(f"Max hops: {max_hops}")
     
     # Initialize results
     results = {
         "status": "processing", 
-        "message": "Tracing route to target...",
+        "message": "Running traceroute...",
         "session_id": session_id
     }
     
     try:
-        # Validate and clean target
-        if not target or not validate_target(target):
-            raise ValueError("Invalid target format")
+        # Validate input
+        if not target or not validate_input(target):
+            raise ValueError("Invalid IP address or domain format")
         
-        # Clean target (remove protocol and path)
-        clean_target = target.strip()
-        if clean_target.startswith(('http://', 'https://')):
-            clean_target = clean_target.split('://', 1)[1]
-        if '/' in clean_target:
-            clean_target = clean_target.split('/', 1)[0]
+        # Run traceroute
+        print(f"Running traceroute to {target}...")
+        traceroute_data = run_traceroute(target)
         
-        print(f"Cleaned target: {clean_target}")
-        
-        # Check if we can resolve the target
-        target_ip = get_target_ip(clean_target)
-        if not target_ip:
-            print(f"Warning: Could not resolve {clean_target} to an IP address")
-        
-        # Use simplified traceroute (more compatible with GitHub Actions)
-        hops = trace_route_simple(clean_target, max_hops)
-        
-        if not hops:
-            raise ValueError("No hops data collected. The traceroute command may have failed.")
+        if "error" in traceroute_data:
+            raise ValueError(traceroute_data["error"])
         
         # Calculate total time
-        total_time = sum(hop['avgTime'] for hop in hops)
+        total_time = sum(hop.get("avgTime", 0) for hop in traceroute_data["hops"])
         
         # Create final results
         results = {
             "status": "success",
-            "target": clean_target,
-            "target_ip": target_ip,
+            "target": target,
             "timestamp": time.time(),
             "session_id": session_id,
             "data": {
-                "hops": hops,
-                "totalHops": len(hops),
-                "totalTime": total_time,
-                "maxHops": max_hops
+                "hops": traceroute_data["hops"],
+                "totalTime": round(total_time, 2),
+                "hopCount": len(traceroute_data["hops"])
             }
         }
         
@@ -226,42 +160,47 @@ def trace_route(target, max_hops=30, timeout=2):
             "session_id": session_id
         }
     
-    # Always write results to the expected location
-    results_path = 'results.json'
+    # Always write results to file, even if there was an error
     try:
-        with open(results_path, 'w') as f:
-            json.dump(results, f, indent=2)
-        print(f"Results successfully written to {results_path}")
+        with open('results.json', 'w') as f:
+            json.dump(results, f)
+        print("Results successfully written to results.json")
     except Exception as file_error:
         print(f"ERROR writing results file: {str(file_error)}")
-        # Create the directory if it doesn't exist
-        os.makedirs(os.path.dirname(results_path), exist_ok=True)
+        # Try to write to a different location as fallback
         try:
-            with open(results_path, 'w') as f:
-                json.dump(results, f, indent=2)
-            print(f"Results successfully written to {results_path} after creating directory")
-        except Exception as retry_error:
-            print(f"ERROR writing results file on retry: {str(retry_error)}")
-            # As a last resort, write to the home directory
-            home_path = os.path.expanduser('~/results.json')
-            try:
-                with open(home_path, 'w') as f:
-                    json.dump(results, f, indent=2)
-                print(f"Results written to home directory: {home_path}")
-                # Copy to expected location
-                shutil.copy(home_path, results_path)
-            except Exception as final_error:
-                print(f"ERROR writing results file to home directory: {str(final_error)}")
-                raise
+            with open(f'/tmp/results_{session_id}.json', 'w') as f:
+                json.dump(results, f)
+            print(f"Results written to fallback location: /tmp/results_{session_id}.json")
+        except Exception as fallback_error:
+            print(f"ERROR writing to fallback location: {str(fallback_error)}")
     
     # Always output the results, even if there was an error
     print(f"results={json.dumps(results)}")
     return results
 
 if __name__ == "__main__":
-    # Get inputs from environment variables
-    target = os.environ.get("TARGET", "example.com")
-    max_hops = int(os.environ.get("MAX_HOPS", "30"))
+    target = os.environ.get("TARGET")
+    if not target:
+        print("ERROR: TARGET environment variable not set.")
+        error_result = {
+            "status": "error", 
+            "message": "TARGET environment variable not set.",
+            "session_id": os.environ.get("SESSION_ID", "unknown")
+        }
+        
+        # Write error results to file
+        try:
+            with open('results.json', 'w') as f:
+                json.dump(error_result, f)
+            print("Error results written to results.json")
+        except Exception as file_error:
+            print(f"ERROR writing error results file: {str(file_error)}")
+        
+        print(f"results={json.dumps(error_result)}")
+        sys.exit(1)
+        
+    traceroute_results = check_traceroute(target)
     
-    # Run the traceroute
-    trace_route(target, max_hops)
+    # The results are already printed in the function
+    sys.exit(0)
