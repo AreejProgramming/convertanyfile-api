@@ -62,7 +62,7 @@ jobs:
         SESSION_ID: ${{ env.SESSION_ID }}
       run: |
         echo "Extracting metadata from $URL"
-        python website_metadata_extractor.py
+        python runner/website_metadata_extractor.py
         
     - name: Process results
       run: |
