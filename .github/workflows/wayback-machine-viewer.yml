@@ -62,6 +62,11 @@ jobs:
         echo "Checking Wayback Machine for $URL"
         python runner/wayback_machine_viewer.py
         
+    - name: List files in directory
+      run: |
+        echo "Listing files in current directory:"
+        ls -la
+        
     - name: Process results
       run: |
         # Check if results file exists
