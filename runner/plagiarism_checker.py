@@ -39,15 +39,16 @@ def split_into_sentences(text):
     sentences = re.split(r'(?<=[.!?])\s+', text)
     return [s.strip() for s in sentences if s.strip()]
 
-def split_into_phrases(text, min_length=5, max_length=10):
+def split_into_phrases(text, min_length=8, max_length=12):
     """
     Split text into phrases of varying lengths for more comprehensive checking
+    Increased minimum length to reduce false positives
     """
     words = text.split()
     phrases = []
     
     # Limit the number of phrases to prevent excessive processing
-    max_phrases = min(100, len(words) * 2)
+    max_phrases = min(50, len(words))  # Reduced from 100
     
     # Generate phrases of different lengths
     for length in range(min_length, max_length + 1):
@@ -65,9 +66,35 @@ def calculate_text_hash(text):
     """
     return hashlib.md5(normalize_text(text).encode()).hexdigest()
 
-def calculate_ngram_similarity(text1, text2, n=3):
+def is_common_phrase(phrase):
+    """
+    Check if a phrase is too common to be considered plagiarism
+    """
+    # List of common phrases that should not be considered plagiarism
+    common_phrases = [
+        "in order to", "as well as", "according to", "in addition to", 
+        "due to the fact", "in the case of", "on the other hand", 
+        "for the purpose of", "in the context of", "with respect to",
+        "in terms of", "on the basis of", "in the absence of",
+        "in the presence of", "in the direction of", "in the vicinity of",
+        "in the middle of", "at the same time", "in the form of",
+        "in the event of", "in the process of", "in the course of",
+        "in the light of", "in the wake of", "in the face of",
+        "in the name of", "in the interest of", "in the spirit of",
+        "in the sense of", "in the field of", "in the area of",
+        "in the realm of", "in the world of", "in the domain of",
+        "in the scope of", "in the range of", "in the frame of",
+        "in the context of", "in the light of", "in the absence of",
+        "in the presence of", "in the direction of", "in the vicinity of"
+    ]
+    
+    normalized_phrase = normalize_text(phrase)
+    return normalized_phrase in common_phrases
+
+def calculate_ngram_similarity(text1, text2, n=4):
     """
     Calculate n-gram similarity between two texts
+    Increased n to 4 for more specific comparisons
     """
     def get_ngrams(text, n):
         words = normalize_text(text).split()
@@ -123,13 +150,21 @@ def check_phrase_similarity(input_phrases, source_phrases):
     best_source_phrase = ""
     
     # Limit the number of phrase comparisons to prevent timeouts
-    max_comparisons = 500
+    max_comparisons = 300  # Reduced from 500
     comparison_count = 0
     
     for input_phrase in input_phrases:
+        # Skip common phrases
+        if is_common_phrase(input_phrase):
+            continue
+            
         for source_phrase in source_phrases:
             if comparison_count >= max_comparisons:
                 break
+                
+            # Skip common phrases
+            if is_common_phrase(source_phrase):
+                continue
                 
             # Check for exact match first
             if normalize_text(input_phrase) == normalize_text(source_phrase):
@@ -296,6 +331,10 @@ def check_plagiarism_comprehensive(text, exclude_quotes=False, check_type="compr
                 if input_idx in matched_sentence_indices:
                     continue  # Skip already matched sentences
                 
+                # Skip short sentences (less than 10 words) as they're more likely to be common phrases
+                if len(input_sentence.split()) < 10:
+                    continue
+                
                 # Check if we're approaching the timeout
                 if time.time() - start_time > max_processing_time:
                     break
@@ -305,15 +344,19 @@ def check_plagiarism_comprehensive(text, exclude_quotes=False, check_type="compr
                     if exclude_quotes and ('"' in input_sentence or "'" in input_sentence):
                         continue
                     
+                    # Skip short sentences
+                    if len(source_sentence.split()) < 10:
+                        continue
+                    
                     # Calculate similarity using multiple methods
-                    ngram_sim = calculate_ngram_similarity(input_sentence, source_sentence, n=3)
+                    ngram_sim = calculate_ngram_similarity(input_sentence, source_sentence, n=4)
                     sequence_sim = calculate_sequence_similarity(input_sentence, source_sentence)
                     
                     # Take the maximum similarity
                     similarity = max(ngram_sim, sequence_sim)
                     
-                    # Lower threshold for better detection
-                    if similarity >= 0.5:  # 50% similarity threshold
+                    # Increased threshold to reduce false positives
+                    if similarity >= 0.7:  # 70% similarity threshold (increased from 50%)
                         sentence_matches.append({
                             "url": source["url"],
                             "title": source["title"],
@@ -330,7 +373,7 @@ def check_plagiarism_comprehensive(text, exclude_quotes=False, check_type="compr
             
             # Check phrase-level matches for any remaining unmatched content
             phrase_similarity, best_input_phrase, best_source_phrase = check_phrase_similarity(input_phrases, source_phrases)
-            if phrase_similarity >= 0.7:  # 70% similarity threshold for phrases
+            if phrase_similarity >= 0.8:  # 80% similarity threshold for phrases (increased from 70%)
                 phrase_matches.append({
                     "url": source["url"],
                     "title": source["title"],
@@ -354,16 +397,24 @@ def check_plagiarism_comprehensive(text, exclude_quotes=False, check_type="compr
         matched_words = sum(match.get("words", 0) for match in all_matches)
         unique_words = total_words - matched_words
         
-        # Calculate overall plagiarism score
+        # Calculate overall plagiarism score with improved algorithm
         if total_sentences > 0:
             # Base score on percentage of sentences that match
             sentence_match_ratio = matched_sentences / total_sentences
+            
             # Also consider average similarity of matches
             avg_similarity = sum(match["similarity"] for match in all_matches) / max(len(all_matches), 1) / 100
+            
             # Weight exact matches more heavily
-            exact_match_weight = len(exact_matches) * 0.3
-            # Combine all metrics
-            plagiarism_score = round((sentence_match_ratio * 0.4 + avg_similarity * 0.3 + exact_match_weight) * 100, 1)
+            exact_match_weight = len(exact_matches) * 0.5  # Increased from 0.3
+            
+            # Only consider significant matches (more than 15 words)
+            significant_matches = [m for m in all_matches if m.get("words", 0) > 15]
+            significant_match_ratio = len(significant_matches) / total_sentences if total_sentences > 0 else 0
+            
+            # Combine all metrics with more weight on significant matches
+            plagiarism_score = round((sentence_match_ratio * 0.3 + avg_similarity * 0.2 + exact_match_weight + significant_match_ratio * 0.5) * 100, 1)
+            
             # Cap at 100%
             plagiarism_score = min(plagiarism_score, 100)
         else:
@@ -372,14 +423,14 @@ def check_plagiarism_comprehensive(text, exclude_quotes=False, check_type="compr
         # Calculate unique score
         unique_score = round(100 - plagiarism_score, 1)
         
-        # Determine risk level
-        if plagiarism_score < 15:
+        # Determine risk level with adjusted thresholds
+        if plagiarism_score < 10:
             risk_level = "Low"
             risk_color = "#10b981"  # Green
-        elif plagiarism_score < 40:
+        elif plagiarism_score < 25:
             risk_level = "Medium"
             risk_color = "#f59e0b"  # Yellow
-        elif plagiarism_score < 70:
+        elif plagiarism_score < 50:
             risk_level = "High"
             risk_color = "#ef4444"  # Red
         else:
