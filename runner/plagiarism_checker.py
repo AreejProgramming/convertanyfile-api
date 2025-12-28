@@ -5,6 +5,7 @@ import sys
 import re
 import requests
 import uuid
+import random
 from datetime import datetime
 from urllib.parse import urlparse
 
@@ -17,23 +18,19 @@ def validate_text(text):
     """
     return text and text.strip() and len(text.strip()) > 10
 
-def check_plagiarism(text):
+def check_plagiarism_smallseo(text, options=None):
     """
-    Check plagiarism using a free API (simulating with Copyleaks API)
+    Check plagiarism using SmallSEOTools API simulation
     """
     try:
-        # For demo purposes, we'll simulate API response
-        # In a real implementation, you would use an API like Copyleaks, Grammarly, etc.
-        
         # Simulate API call delay
         time.sleep(1)
         
-        # Generate mock plagiarism data
+        # Extract text characteristics
         text_length = len(text)
         word_count = len(text.split())
         
-        # Calculate a mock plagiarism score based on text characteristics
-        # This is just for demonstration - real API would provide actual scores
+        # Calculate a mock plagiarism score
         base_score = 0
         
         # Factors that might increase plagiarism score
@@ -45,7 +42,6 @@ def check_plagiarism(text):
             base_score += 2  # Many quotes might indicate citations
             
         # Add some randomness
-        import random
         score = min(base_score + random.randint(0, 15), 35)
         
         # Generate mock sources
@@ -55,14 +51,17 @@ def check_plagiarism(text):
         # Mock source database
         mock_sources = [
             {"url": "https://en.wikipedia.org/wiki/Artificial_intelligence", "title": "Wikipedia - Artificial Intelligence"},
-            {"url": "https://www.techcrunch.com/2023/05/25/ai-and-the-future-of-work", "title": "TechCrunch - AI and the Future of Work"},
+            {"url": "https://www.techcrunch.com/2023/05/25/ai-and-the-future-of-work", "title": "TechCrunch - AI and Future of Work"},
             {"url": "https://www.example-blog.com/web-development-trends", "title": "Example Blog - Web Development Trends"},
             {"url": "https://www.researchgate.net/publication/Impact_of_social_media", "title": "ResearchGate - Impact of Social Media"},
-            {"url": "https://www.example-university.edu/papers/academic-integrity", "title": "Example University - Academic Integrity"}
+            {"url": "https://scholar.google.com/scholar?q=academic+integrity", "title": "Google Scholar - Academic Integrity"},
+            {"url": "https://www.jstor.org/stable/23453643", "title": "JSTOR - Academic Database"},
+            {"url": "https://arxiv.org/abs/2312.10298", "title": "arXiv - Academic Papers"}
         ]
         
         for i in range(num_sources):
             source = random.choice(mock_sources)
+            
             # Extract a random fragment from the text
             sentences = re.split(r'[.!?]+', text)
             if sentences and len(sentences) > 0:
@@ -114,7 +113,7 @@ def check_plagiarism_service(text):
         
         # Check plagiarism
         print(f"Checking plagiarism for text of length {len(text)}")
-        plagiarism_data = check_plagiarism(text)
+        plagiarism_data = check_plagiarism_smallseo(text)
         
         if "error" in plagiarism_data:
             raise ValueError(plagiarism_data["error"])
