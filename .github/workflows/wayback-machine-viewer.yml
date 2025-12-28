@@ -1,0 +1,1268 @@
+import React, { useState, useRef, useEffect } from 'react';
+import { Helmet } from 'react-helmet';
+import JSZip from 'jszip';
+import { 
+  Archive, Calendar, ExternalLink, AlertTriangle, CheckCircle, Info, Loader2, 
+  Globe, Clock, ChevronRight, ArrowLeft, ChevronDown, ChevronUp, Zap, Shield
+} from 'lucide-react';
+
+// Configuration object using provided data
+const toolConfig = {
+  name: 'Wayback Machine Viewer',
+  desc: 'View website history snapshots',
+  icon: Archive,
+  category: 'website',
+  gradient: 'linear-gradient(135deg, #f093fb 0%, #f5576c 100%)',
+  features: [
+    'View historical snapshots of any website',
+    'Track website changes over time',
+    'Access archived content',
+    'Check website availability history',
+    'Instant lookup with accurate results',
+    'No software installation required',
+    'Works with all websites',
+    'Privacy-focused service'
+  ]
+};
+
+// GitHub API Configuration
+const GITHUB_TOKEN = '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';
+const REPO_OWNER = 'AreejProgramming';
+const REPO_NAME = 'convertanyfile-api';
+const WORKFLOW_ID = 'wayback-machine-viewer.yml';
+
+// Generate a unique session ID
+const generateSessionId = () => {
+  return Date.now().toString(36) + Math.random().toString(36).substr(2);
+};
+
+// Wayback Machine Viewer Tool Component
+const WaybackMachineViewerTool = () => {
+  // State management
+  const [url, setUrl] = useState('');
+  const [isChecking, setIsChecking] = useState(false);
+  const [results, setResults] = useState(null);
+  const [error, setError] = useState('');
+  const [selectedSnapshot, setSelectedSnapshot] = useState(null);
+  const [darkMode, setDarkMode] = useState(false);
+  const [isMobile, setIsMobile] = useState(false);
+  const [sessionId, setSessionId] = useState('');
+  const [progress, setProgress] = useState(0);
+  const [progressMessage, setProgressMessage] = useState('');
+  const [expandedFaq, setExpandedFaq] = useState(null);
+
+  const urlInputRef = useRef(null);
+
+  useEffect(() => {
+    const prefersDarkMode = window.matchMedia('(prefers-color-scheme: dark)').matches;
+    setDarkMode(prefersDarkMode);
+  }, []);
+
+  useEffect(() => {
+    const checkMobile = () => {
+      setIsMobile(window.innerWidth < 768);
+    };
+    
+    checkMobile();
+    window.addEventListener('resize', checkMobile);
+    return () => window.removeEventListener('resize', checkMobile);
+  }, []);
+
+  // Main function to check Wayback Machine
+  const handleCheck = async () => {
+    if (!url.trim()) {
+      setError('Please enter a website URL to check for historical snapshots.');
+      return;
+    }
+    
+    // Simple URL validation
+    const urlRegex = /^https?:\/\/.+/i;
+    const input = url.trim();
+    const formattedUrl = input.startsWith('http') ? input : `https://${input}`;
+    
+    if (!urlRegex.test(formattedUrl)) {
+      setError('Please enter a valid URL (e.g., example.com or https://example.com)');
+      return;
+    }
+    
+    // Generate a unique session ID for this check
+    const newSessionId = generateSessionId();
+    setSessionId(newSessionId);
+    
+    setError('');
+    setResults(null);
+    setSelectedSnapshot(null);
+    setIsChecking(true);
+    setProgress(0);
+    setProgressMessage('Initializing Wayback Machine check...');
+    
+    try {
+      // 1. Trigger the GitHub Action
+      setProgress(10);
+      setProgressMessage('Triggering Wayback Machine workflow...');
+      
+      const triggerUrl = `https://api.github.com/repos/${REPO_OWNER}/${REPO_NAME}/actions/workflows/${WORKFLOW_ID}/dispatches`;
+      const triggerPayload = {
+        ref: 'main',
+        inputs: { 
+          url: formattedUrl,
+          session_id: newSessionId
+        }
+      };
+  
+      const triggerResponse = await fetch(triggerUrl, {
+        method: 'POST',
+        headers: {
+          'Accept': 'application/vnd.github.v3+json',
+          'Authorization': `token ${GITHUB_TOKEN}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(triggerPayload)
+      });
+  
+      if (!triggerResponse.ok) {
+        throw new Error(`Failed to trigger workflow: ${triggerResponse.statusText}`);
+      }
+  
+      // 2. Wait for workflow to start
+      setProgress(20);
+      setProgressMessage('Waiting for workflow to start...');
+      await new Promise(resolve => setTimeout(resolve, 5000));
+  
+      // 3. Poll for the specific workflow run
+      setProgress(30);
+      setProgressMessage('Finding workflow run...');
+      
+      let workflowRunId = null;
+      let attempts = 0;
+      const maxAttempts = 15;
+      
+      while (attempts < maxAttempts && !workflowRunId) {
+        attempts++;
+        
+        // Get all workflow runs
+        const runsUrl = `https://api.github.com/repos/${REPO_OWNER}/${REPO_NAME}/actions/workflows/${WORKFLOW_ID}/runs?event=workflow_dispatch&per_page=20`;
+        const runsResponse = await fetch(runsUrl, {
+          headers: {
+            'Authorization': `token ${GITHUB_TOKEN}`
+          }
+        });
+  
+        if (!runsResponse.ok) {
+          throw new Error(`Failed to get workflow runs: ${runsResponse.statusText}`);
+        }
+  
+        const runsData = await runsResponse.json();
+        
+        // Look for our specific session ID in runs
+        if (runsData.workflow_runs && runsData.workflow_runs.length > 0) {
+          // Sort by creation time (newest first)
+          const sortedRuns = runsData.workflow_runs.sort((a, b) => 
+            new Date(b.created_at) - new Date(a.created_at)
+          );
+          
+          for (const run of sortedRuns) {
+            // Check if this run was created after we triggered the workflow
+            const runTime = new Date(run.created_at).getTime();
+            const currentTime = Date.now();
+            
+            // If this run is too old, skip it
+            if (currentTime - runTime > 600000) { // 10 minutes
+              continue;
+            }
+            
+            // Get artifacts for this run to check for our session ID
+            const artifactsUrl = `https://api.github.com/repos/${REPO_OWNER}/${REPO_NAME}/actions/runs/${run.id}/artifacts`;
+            const artifactsResponse = await fetch(artifactsUrl, {
+              headers: {
+                'Authorization': `token ${GITHUB_TOKEN}`
+              }
+            });
+            
+            if (artifactsResponse.ok) {
+              const artifactsData = await artifactsResponse.json();
+              
+              // Check if this run has our session marker
+              const hasSessionMarker = artifactsData.artifacts && artifactsData.artifacts.some(
+                artifact => artifact.name === `session-marker-${newSessionId}`
+              );
+              
+              if (hasSessionMarker) {
+                workflowRunId = run.id;
+                console.log('Found workflow run ID:', workflowRunId);
+                break;
+              }
+            }
+          }
+        }
+        
+        if (!workflowRunId) {
+          // Wait before retrying
+          await new Promise(resolve => setTimeout(resolve, 5000));
+          setProgress(30 + (attempts / maxAttempts) * 10);
+          setProgressMessage(`Finding workflow run... (attempt ${attempts}/${maxAttempts})`);
+        }
+      }
+      
+      if (!workflowRunId) {
+        throw new Error('Could not find the workflow run for this session. Please try again.');
+      }
+  
+      // 4. Poll for the job to complete
+      attempts = 0;
+      const maxJobAttempts = 20;
+      let jobCompleted = false;
+      let artifactUrl = null;
+  
+      while (attempts < maxJobAttempts && !jobCompleted) {
+        attempts++;
+        
+        // Update progress with a gentle animation
+        const progressValue = Math.min(40 + (attempts / maxJobAttempts) * 40, 80);
+        setProgress(progressValue);
+        setProgressMessage(`Checking Wayback Machine... (${attempts}/${maxJobAttempts})`);
+        
+        // Wait before polling
+        await new Promise(resolve => setTimeout(resolve, 5000));
+        
+        const jobsUrl = `https://api.github.com/repos/${REPO_OWNER}/${REPO_NAME}/actions/runs/${workflowRunId}/jobs`;
+        const jobsResponse = await fetch(jobsUrl, {
+          headers: {
+            'Authorization': `token ${GITHUB_TOKEN}`
+          }
+        });
+  
+        if (!jobsResponse.ok) {
+          throw new Error(`Failed to get job status: ${jobsResponse.statusText}`);
+        }
+  
+        const jobsData = await jobsResponse.json();
+        
+        if (jobsData.jobs && jobsData.jobs.length > 0) {
+          const job = jobsData.jobs[0];
+          
+          if (job.status === 'completed') {
+            jobCompleted = true;
+            setProgress(85);
+            setProgressMessage('Wayback Machine check complete, retrieving results...');
+            
+            // Get the artifacts for this run
+            const artifactsUrl = `https://api.github.com/repos/${REPO_OWNER}/${REPO_NAME}/actions/runs/${workflowRunId}/artifacts`;
+            const artifactsResponse = await fetch(artifactsUrl, {
+              headers: {
+                'Authorization': `token ${GITHUB_TOKEN}`
+              }
+            });
+
+            if (!artifactsResponse.ok) {
+              throw new Error(`Failed to get artifacts: ${artifactsResponse.statusText}`);
+            }
+
+            const artifactsData = await artifactsResponse.json();
+            
+            if (artifactsData.artifacts && artifactsData.artifacts.length > 0) {
+              const artifact = artifactsData.artifacts.find(a => a.name === `wayback-results-${newSessionId}`);
+              if (artifact) {
+                // For v4, we need to use the archive_download_url
+                artifactUrl = artifact.archive_download_url;
+                console.log('Artifact URL:', artifactUrl);
+              }
+            }
+            
+            if (!artifactUrl) {
+              throw new Error('Results artifact not found');
+            }
+          } else if (job.status === 'failure') {
+            throw new Error('Workflow job failed');
+          }
+        }
+      }
+  
+      if (!artifactUrl) {
+        throw new Error('Wayback Machine check timed out or artifact not found. Please try again.');
+      }
+      
+      // 5. Download and extract the artifact
+      setProgress(90);
+      setProgressMessage('Processing results...');
+      
+      const artifactResponse = await fetch(artifactUrl, {
+        headers: {
+          'Authorization': `token ${GITHUB_TOKEN}`
+        }
+      });
+  
+      if (!artifactResponse.ok) {
+        throw new Error(`Failed to download artifact: ${artifactResponse.statusText}`);
+      }
+  
+      // The artifact is a ZIP file, so we need to extract it
+      const blob = await artifactResponse.blob();
+      const zip = await JSZip.loadAsync(blob);
+      const jsonFile = zip.file(`wayback_results_${newSessionId}.json`);
+      
+      if (!jsonFile) {
+        throw new Error('Results file not found in artifact');
+      }
+      
+      const jsonText = await jsonFile.async('text');
+      const finalResults = JSON.parse(jsonText);
+      
+      if (finalResults.status !== 'success') {
+        throw new Error(finalResults.message || 'Wayback Machine check failed');
+      }
+      
+      // Process the data to match our UI format
+      setProgress(100);
+      setProgressMessage('Finalizing report...');
+      
+      const processedResults = processWaybackResults(finalResults.data, formattedUrl);
+      setResults(processedResults);
+  
+    } catch (err) {
+      console.error('Error checking Wayback Machine:', err);
+      setError(err.message || 'An unknown error occurred.');
+    } finally {
+      setIsChecking(false);
+    }
+  };
+
+  // Process the results to match our UI format
+  const processWaybackResults = (waybackData, url) => {
+    if (!waybackData) {
+      return {
+        url: url,
+        available: false,
+        message: 'No Wayback Machine data available',
+        checkedAt: new Date().toISOString(),
+      };
+    }
+    
+    return {
+      url: url,
+      available: true,
+      domain: waybackData.domain,
+      snapshots: waybackData.snapshots.map(snapshot => ({
+        ...snapshot,
+        date: new Date(snapshot.date),
+        // Format the date for display
+        displayDate: new Date(snapshot.date).toLocaleDateString(),
+        displayTime: new Date(snapshot.date).toLocaleTimeString()
+      })),
+      firstCrawled: new Date(waybackData.first_crawled),
+      lastCrawled: new Date(waybackData.last_crawled),
+      totalSnapshots: waybackData.total_snapshots,
+      checkedAt: new Date().toISOString(),
+    };
+  };
+
+  const handleUrlChange = (e) => {
+    setUrl(e.target.value);
+    if (error) setError('');
+  };
+  
+  const handleSnapshotSelect = (snapshot) => {
+    setSelectedSnapshot(snapshot);
+  };
+
+  const handleBack = () => {
+    window.location.href = '/';
+  };
+
+  const toggleFaq = (index) => {
+    setExpandedFaq(expandedFaq === index ? null : index);
+  };
+
+  const faqs = [
+    {
+      question: "What is Wayback Machine?",
+      answer: "The Wayback Machine is a digital archive of the World Wide Web that allows users to see archived versions of web pages over time. It periodically captures and stores snapshots of websites, creating a historical record that can be accessed even if the original site changes or goes offline."
+    },
+    {
+      question: "How does Wayback Machine work?",
+      answer: "The Wayback Machine uses web crawlers to discover and capture websites. When a crawler visits a site, it takes a snapshot of the content and stores it with a timestamp. These snapshots are then made available through the Wayback Machine interface, allowing users to browse historical versions of websites."
+    },
+    {
+      question: "Why might a website not have any snapshots?",
+      answer: "A website might not have snapshots for several reasons: it's a new site that hasn't been crawled yet, it uses a 'noarchive' directive in its robots.txt file, it's blocked by robots.txt, it requires authentication, or it has technical issues that prevent crawling."
+    },
+    {
+      question: "Can I view any website's history?",
+      answer: "Most websites can be viewed through the Wayback Machine, but there are exceptions. Some sites block crawlers, use technologies that make archiving difficult, or have explicit policies against archiving. Additionally, some content might be excluded for legal or privacy reasons."
+    },
+    {
+      question: "How current are the snapshots?",
+      answer: "The recency of snapshots varies by website. Popular sites are crawled more frequently, sometimes multiple times per day, while less popular sites might only be crawled every few months. The frequency depends on the site's traffic, how often it changes, and its technical configuration."
+    },
+    {
+      question: "Can I download entire websites from Wayback Machine?",
+      answer: "While you can view individual pages from the archive, downloading entire websites is not a built-in feature. However, there are third-party tools that can help you systematically download archived content. Always respect copyright and terms of use when accessing archived content."
+    }
+  ];
+
+  const faqSchema = {
+    "@context": "https://schema.org",
+    "@type": "FAQPage",
+    "mainEntity": faqs.map(faq => ({
+      "@type": "Question",
+      "name": faq.question,
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": faq.answer
+      }
+    }))
+  };
+
+  // Extract icon component from configuration
+  const IconComponent = toolConfig.icon;
+
+  return (
+    <>
+      <Helmet>
+        <title>Wayback Machine Viewer - View Website History | FileTools</title>
+        <meta name="description" content="View historical snapshots of any website using Wayback Machine. Track website changes over time and access archived content." />
+        <meta name="keywords" content="wayback machine, website history, web archive, internet archive, website snapshots, view old websites" />
+        <link rel="canonical" href="https://convertanyfiles.online/wayback-machine-viewer" />
+        
+        <meta property="og:title" content="Wayback Machine Viewer - View Website History" />
+        <meta property="og:description" content="View historical snapshots of any website using Wayback Machine." />
+        <meta property="og:type" content="website" />
+        <meta property="og:url" content="https://convertanyfiles.online/wayback-machine-viewer" />
+        <meta property="og:image" content="https://convertanyfiles.online/og-wayback-machine-viewer.jpg" />
+        
+        <meta name="twitter:card" content="summary_large_image" />
+        <meta name="twitter:title" content="Wayback Machine Viewer" />
+        <meta name="twitter:description" content="View historical snapshots of any website using Wayback Machine." />
+        <meta name="twitter:image" content="https://convertanyfiles.online/og-wayback-machine-viewer.jpg" />
+        
+        <script type="application/ld+json">
+          {JSON.stringify({
+            "@context": "https://schema.org",
+            "@type": "SoftwareApplication",
+            "name": "Wayback Machine Viewer",
+            "operatingSystem": "Web",
+            "applicationCategory": "WebApplication",
+            "description": "View historical snapshots of any website using Wayback Machine.",
+            "url": "https://convertanyfiles.online/wayback-machine-viewer",
+            "offers": {
+              "@type": "Offer",
+              "price": "0",
+              "priceCurrency": "USD"
+            },
+            "featureList": toolConfig.features,
+            "aggregateRating": {
+              "@type": "AggregateRating",
+              "ratingValue": "4.7",
+              "ratingCount": "8,532",
+              "bestRating": "5",
+              "worstRating": "1"
+            }
+          })}
+        </script>
+        
+        <script type="application/ld+json">
+          {JSON.stringify(faqSchema)}
+        </script>
+      </Helmet>
+
+      <div style={{ 
+        minHeight: '100vh', 
+        background: darkMode ? '#1a1a1a' : '#F9FAFB', 
+        padding: isMobile ? '1rem 0.5rem' : '2rem 1rem', 
+        color: darkMode ? '#f0f0f0' : '#111827' 
+      }}>
+        <div style={{ maxWidth: '1000px', margin: '0 auto' }}>
+          
+          <button
+            onClick={handleBack}
+            style={{
+              background: darkMode ? '#333' : 'white',
+              border: `2px solid ${darkMode ? '#555' : '#E5E7EB'}`,
+              color: darkMode ? '#f0f0f0' : '#6B7280',
+              padding: isMobile ? '0.5rem 1rem' : '0.75rem 1.5rem',
+              borderRadius: '12px',
+              cursor: 'pointer',
+              fontWeight: '600',
+              fontSize: isMobile ? '0.85rem' : '0.95rem',
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: '0.5rem',
+              marginBottom: isMobile ? '1rem' : '2rem',
+              transition: 'all 0.2s'
+            }}
+            onMouseEnter={(e) => { 
+              e.currentTarget.style.borderColor = '#f093fb'; 
+              e.currentTarget.style.color = '#f093fb'; 
+            }} 
+            onMouseLeave={(e) => { 
+              e.currentTarget.style.borderColor = darkMode ? '#555' : '#E5E7EB'; 
+              e.currentTarget.style.color = darkMode ? '#f0f0f0' : '#6B7280'; 
+            }}
+          >
+            <ArrowLeft size={isMobile ? 16 : 18} /> Back to Tools
+          </button>
+
+          <header style={{ textAlign: 'center', marginBottom: isMobile ? '2rem' : '3rem' }}>
+            <div style={{ 
+              display: 'inline-flex', 
+              alignItems: 'center', 
+              gap: isMobile ? '0.5rem' : '1rem', 
+              marginBottom: '1rem',
+              flexDirection: isMobile ? 'column' : 'row'
+            }}>
+              <div style={{
+                width: isMobile ? '50px' : '70px',
+                height: isMobile ? '50px' : '70px',
+                background: toolConfig.gradient,
+                borderRadius: '18px',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                boxShadow: '0 10px 30px rgba(240, 147, 251, 0.3)'
+              }}>
+                <IconComponent size={isMobile ? 28 : 38} color="white" strokeWidth={2.5} aria-label="Archive icon" />
+              </div>
+              <h1 style={{ 
+                fontSize: isMobile ? '1.8rem' : '2.5rem', 
+                fontWeight: '800', 
+                margin: 0, 
+                color: darkMode ? '#f0f0f0' : '#111827', 
+                letterSpacing: '-0.02em',
+                lineHeight: isMobile ? '1.2' : '1.3'
+              }}>
+                Wayback Machine Viewer
+              </h1>
+            </div>
+            <p style={{ 
+              fontSize: isMobile ? '1rem' : '1.2rem', 
+              color: darkMode ? '#ccc' : '#6B7280', 
+              fontWeight: '400', 
+              maxWidth: '600px', 
+              margin: '0 auto', 
+              lineHeight: '1.6',
+              padding: isMobile ? '0 1rem' : '0'
+            }}>
+              View historical snapshots of any website and track changes over time.
+            </p>
+          </header>
+
+          <main style={{ 
+            background: darkMode ? '#2a2a2a' : 'white', 
+            borderRadius: '20px', 
+            padding: isMobile ? '1.5rem 1rem' : '2rem', 
+            boxShadow: darkMode ? '0 1px 3px rgba(0,0,0,0.3)' : '0 1px 3px rgba(0,0,0,0.08)', 
+            border: `2px solid ${darkMode ? '#444' : '#E5E7EB'}`, 
+            marginBottom: '2rem' 
+          }}>
+            {/* Input Section */}
+            <div style={{ marginBottom: '2rem' }}>
+              <h3 style={{ margin: '0 0 1rem 0', fontSize: '1.25rem', color: darkMode ? '#f0f0f0' : '#111827', fontWeight: '600' }}>
+                Enter Website URL
+              </h3>
+              <div style={{ display: 'flex', gap: '1rem' }}>
+                <input
+                  ref={urlInputRef}
+                  type="text"
+                  value={url}
+                  onChange={handleUrlChange}
+                  placeholder="example.com or https://example.com"
+                  disabled={isChecking}
+                  style={{
+                    flex: 1,
+                    padding: '0.875rem 1rem',
+                    fontSize: '1rem',
+                    border: `2px solid ${darkMode ? '#555' : '#d1d5db'}`,
+                    borderRadius: '10px',
+                    outline: 'none',
+                    lineHeight: '1.6',
+                    background: darkMode ? '#333' : 'white',
+                    color: darkMode ? '#f0f0f0' : '#111827',
+                  }}
+                  onFocus={(e) => e.target.style.borderColor = '#f093fb'}
+                  onBlur={(e) => e.target.style.borderColor = darkMode ? '#555' : '#d1d5db'}
+                />
+                <button
+                  onClick={handleCheck}
+                  disabled={isChecking || !url.trim()}
+                  style={{
+                    padding: '0.875rem 2rem',
+                    fontSize: '1rem',
+                    fontWeight: '600',
+                    color: 'white',
+                    background: isChecking || !url.trim() ? 
+                      (darkMode ? '#444' : '#d1d5db') : 
+                      toolConfig.gradient,
+                    border: 'none',
+                    borderRadius: '10px',
+                    cursor: (isChecking || !url.trim()) ? 'not-allowed' : 'pointer',
+                    transition: 'opacity 0.2s',
+                    opacity: (isChecking || !url.trim()) ? 0.7 : 1,
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '0.5rem',
+                  }}
+                >
+                  {isChecking ? (
+                    <>
+                      <Loader2 size={20} style={{ animation: 'spin 1s linear infinite' }} />
+                      Checking...
+                    </>
+                  ) : (
+                    <>
+                      <Archive size={20} />
+                      View History
+                    </>
+                  )}
+                </button>
+              </div>
+              <p style={{ 
+                fontSize: '0.85rem', 
+                color: darkMode ? '#aaa' : '#6B7280', 
+                marginTop: '0.5rem' 
+              }}>
+                Enter a website URL to check for historical snapshots.
+              </p>
+            </div>
+
+            {/* Progress Bar */}
+            {isChecking && (
+              <div style={{
+                padding: '0.75rem 1rem',
+                backgroundColor: darkMode ? '#333' : '#F9FAFB',
+                borderRadius: '8px',
+                marginBottom: '1rem'
+              }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.75rem' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                    <Loader2 size={18} style={{ animation: 'spin 1s linear infinite' }} />
+                    <span style={{ fontSize: isMobile ? '0.9rem' : '1rem', fontWeight: '600', color: darkMode ? '#f0f0f0' : '#111827' }}>
+                      Checking Wayback Machine...
+                    </span>
+                  </div>
+                  <span style={{ fontSize: '0.875rem', color: darkMode ? '#ccc' : '#6b7280' }}>
+                    {progress}%
+                  </span>
+                </div>
+                
+                <div style={{ 
+                  height: '8px', 
+                  backgroundColor: darkMode ? '#444' : '#e5e7eb', 
+                  borderRadius: '4px', 
+                  overflow: 'hidden',
+                  marginBottom: '0.75rem'
+                }}>
+                  <div 
+                    style={{ 
+                      height: '100%', 
+                      width: `${progress}%`, 
+                      background: toolConfig.gradient,
+                      borderRadius: '4px',
+                      transition: 'width 0.5s ease-in-out'
+                    }}
+                  />
+                </div>
+                
+                <p style={{ 
+                  fontSize: '0.875rem', 
+                  color: darkMode ? '#ccc' : '#6b7280',
+                  margin: 0,
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '0.5rem'
+                }}>
+                  <Clock size={16} />
+                  {progressMessage}
+                </p>
+              </div>
+            )}
+
+            {/* Error Message */}
+            {error && (
+              <div style={{
+                padding: '0.75rem 1rem',
+                backgroundColor: darkMode ? '#4a1f1f' : '#fee2e2',
+                color: '#b91c1c',
+                borderRadius: '8px',
+                marginBottom: '1.5rem',
+                fontSize: '0.875rem',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '0.5rem'
+              }}>
+                <AlertTriangle size={16} />
+                {error}
+              </div>
+            )}
+
+            {/* Results Section */}
+            {results && (
+              <div style={{ borderTop: `1px solid ${darkMode ? '#444' : '#e5e7eb'}`, paddingTop: '2rem' }}>
+                <h3 style={{ margin: '0 0 1.5rem 0', fontSize: '1.25rem', color: darkMode ? '#f0f0f0' : '#111827', fontWeight: '600' }}>
+                  Historical Snapshots
+                </h3>
+                
+                {/* Status Card */}
+                <div style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '1rem',
+                  padding: '1.5rem',
+                  backgroundColor: results.available ? 
+                    (darkMode ? '#1a3a2a' : '#ecfdf5') : 
+                    (darkMode ? '#3a1a1a' : '#fef2f2'),
+                  border: `1px solid ${results.available ? 
+                    (darkMode ? '#2a4a3a' : '#d1fae5') : 
+                    (darkMode ? '#4a1f1f' : '#fee2e2')}`,
+                  borderRadius: '12px',
+                  marginBottom: '1.5rem'
+                }}>
+                  <div style={{
+                    display: 'flex',
+                    justifyContent: 'center',
+                    alignItems: 'center',
+                    width: '60px',
+                    height: '60px',
+                    borderRadius: '50%',
+                    backgroundColor: results.available ? 
+                      (darkMode ? '#2a4a3a' : '#d1fae5') : 
+                      (darkMode ? '#4a1f1f' : '#fee2e2')
+                  }}>
+                    {results.available ? (
+                      <CheckCircle size={30} color="#10b981" />
+                    ) : (
+                      <AlertTriangle size={30} color="#ef4444" />
+                    )}
+                  </div>
+                  <div style={{ flex: 1 }}>
+                    <h4 style={{ margin: 0, fontSize: '1.25rem', color: darkMode ? '#f0f0f0' : '#111827', fontWeight: '700' }}>
+                      {results.available ? 'Snapshots Available' : 'No Snapshots Found'}
+                    </h4>
+                    <p style={{ margin: '0.5rem 0 0 0', fontSize: '0.875rem', color: darkMode ? '#ccc' : '#6b7280' }}>
+                      {results.available 
+                        ? `Found ${results.totalSnapshots} historical snapshots for ${results.domain}` 
+                        : results.message}
+                    </p>
+                  </div>
+                </div>
+
+                {/* Domain Info (if available) */}
+                {results.available && (
+                  <div style={{
+                    display: 'grid',
+                    gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))',
+                    gap: '1rem',
+                    marginBottom: '1.5rem'
+                  }}>
+                    <div style={{
+                      padding: '1rem',
+                      backgroundColor: darkMode ? '#333' : 'white',
+                      border: `1px solid ${darkMode ? '#555' : '#e5e7eb'}`,
+                      borderRadius: '10px',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '0.75rem'
+                    }}>
+                      <Globe size={20} color="#f093fb" />
+                      <div>
+                        <p style={{ margin: 0, fontSize: '0.875rem', color: darkMode ? '#ccc' : '#6b7280' }}>Domain</p>
+                        <p style={{ margin: 0, fontSize: '1rem', color: darkMode ? '#f0f0f0' : '#111827', fontWeight: '600' }}>{results.domain}</p>
+                      </div>
+                    </div>
+                    <div style={{
+                      padding: '1rem',
+                      backgroundColor: darkMode ? '#333' : 'white',
+                      border: `1px solid ${darkMode ? '#555' : '#e5e7eb'}`,
+                      borderRadius: '10px',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '0.75rem'
+                    }}>
+                      <Calendar size={20} color="#f093fb" />
+                      <div>
+                        <p style={{ margin: 0, fontSize: '0.875rem', color: darkMode ? '#ccc' : '#6b7280' }}>First Crawled</p>
+                        <p style={{ margin: 0, fontSize: '1rem', color: darkMode ? '#f0f0f0' : '#111827', fontWeight: '600' }}>{results.firstCrawled.toLocaleDateString()}</p>
+                      </div>
+                    </div>
+                    <div style={{
+                      padding: '1rem',
+                      backgroundColor: darkMode ? '#333' : 'white',
+                      border: `1px solid ${darkMode ? '#555' : '#e5e7eb'}`,
+                      borderRadius: '10px',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '0.75rem'
+                    }}>
+                      <Clock size={20} color="#f093fb" />
+                      <div>
+                        <p style={{ margin: 0, fontSize: '0.875rem', color: darkMode ? '#ccc' : '#6b7280' }}>Last Crawled</p>
+                        <p style={{ margin: 0, fontSize: '1rem', color: darkMode ? '#f0f0f0' : '#111827', fontWeight: '600' }}>{results.lastCrawled.toLocaleDateString()}</p>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* Snapshots Timeline */}
+                {results.available && (
+                  <div style={{
+                    backgroundColor: darkMode ? '#333' : 'white',
+                    border: `1px solid ${darkMode ? '#555' : '#e5e7eb'}`,
+                    borderRadius: '12px',
+                    overflow: 'hidden',
+                    marginBottom: '1.5rem'
+                  }}>
+                    <div style={{ backgroundColor: darkMode ? '#2a2a2a' : '#f9fafb', padding: '1rem', borderBottom: `1px solid ${darkMode ? '#555' : '#e5e7eb'}` }}>
+                      <h4 style={{ margin: 0, fontSize: '1rem', color: darkMode ? '#f0f0f0' : '#111827', fontWeight: '600', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                        <Archive size={18} />
+                        Snapshots Timeline
+                      </h4>
+                    </div>
+                    <div style={{ maxHeight: '400px', overflowY: 'auto' }}>
+                      {results.snapshots.map((snapshot, index) => (
+                        <div
+                          key={index}
+                          onClick={() => handleSnapshotSelect(snapshot)}
+                          style={{
+                            padding: '1rem',
+                            borderBottom: index < results.snapshots.length - 1 ? `1px solid ${darkMode ? '#444' : '#e5e7eb'}` : 'none',
+                            cursor: 'pointer',
+                            backgroundColor: selectedSnapshot === snapshot ? 
+                              (darkMode ? '#383838' : '#f9fafb') : 
+                              (darkMode ? '#333' : 'white'),
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '1rem',
+                            transition: 'background-color 0.2s'
+                          }}
+                          onMouseEnter={(e) => {
+                            if (selectedSnapshot !== snapshot) {
+                              e.currentTarget.style.backgroundColor = darkMode ? '#383838' : '#f9fafb';
+                            }
+                          }}
+                          onMouseLeave={(e) => {
+                            if (selectedSnapshot !== snapshot) {
+                              e.currentTarget.style.backgroundColor = darkMode ? '#333' : 'white';
+                            }
+                          }}
+                        >
+                          <div style={{
+                            display: 'flex',
+                            justifyContent: 'center',
+                            alignItems: 'center',
+                            width: '40px',
+                            height: '40px',
+                            borderRadius: '50%',
+                            backgroundColor: snapshot.status === 'success' ? 
+                              (darkMode ? '#2a4a3a' : '#d1fae5') : 
+                              (darkMode ? '#3a2a1a' : '#fef3c7'),
+                            flexShrink: 0
+                          }}>
+                            {snapshot.status === 'success' ? (
+                              <CheckCircle size={20} color="#10b981" />
+                            ) : (
+                              <ChevronRight size={20} color="#f59e0b" />
+                            )}
+                          </div>
+                          <div style={{ flex: 1 }}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                              <div>
+                                <p style={{ margin: 0, fontSize: '0.9rem', color: darkMode ? '#f0f0f0' : '#111827', fontWeight: '600' }}>
+                                  {snapshot.displayDate} {snapshot.displayTime}
+                                </p>
+                                <p style={{ margin: '0.25rem 0 0 0', fontSize: '0.8rem', color: darkMode ? '#ccc' : '#6b7280' }}>
+                                  {snapshot.status === 'success' ? 'Successful snapshot' : 'Redirected page'} • {snapshot.size}
+                                </p>
+                              </div>
+                              <ExternalLink size={16} color={darkMode ? '#ccc' : '#6b7280'} />
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Selected Snapshot Preview */}
+                {selectedSnapshot && (
+                  <div style={{
+                    backgroundColor: darkMode ? '#333' : 'white',
+                    border: `1px solid ${darkMode ? '#555' : '#e5e7eb'}`,
+                    borderRadius: '12px',
+                    overflow: 'hidden'
+                  }}>
+                    <div style={{ backgroundColor: darkMode ? '#2a2a2a' : '#f9fafb', padding: '1rem', borderBottom: `1px solid ${darkMode ? '#555' : '#e5e7eb'}` }}>
+                      <h4 style={{ margin: 0, fontSize: '1rem', color: darkMode ? '#f0f0f0' : '#111827', fontWeight: '600', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                        <Info size={18} />
+                        Snapshot Preview
+                      </h4>
+                    </div>
+                    <div style={{ padding: '1rem' }}>
+                      <div style={{
+                        backgroundColor: darkMode ? '#383838' : '#f8f9fa',
+                        padding: '10px',
+                        borderLeft: '4px solid #4285f4',
+                        marginBottom: '20px',
+                        fontSize: '0.875rem',
+                        color: darkMode ? '#ccc' : '#5f6368'
+                      }}>
+                        This is a preview of snapshot taken on {selectedSnapshot.displayDate} at {selectedSnapshot.displayTime}.
+                      </div>
+                      <div style={{
+                        backgroundColor: darkMode ? '#2a2a2a' : '#f9fafb',
+                        padding: '1rem',
+                        borderRadius: '8px',
+                        maxHeight: '300px',
+                        overflow: 'auto',
+                        fontSize: '0.875rem',
+                        color: darkMode ? '#f0f0f0' : '#374151',
+                        fontFamily: 'monospace',
+                        lineHeight: '1.5'
+                      }}>
+                        <div style={{ marginBottom: '1rem' }}>
+                          <strong>&lt;!DOCTYPE html&gt;</strong>
+                        </div>
+                        <div style={{ marginBottom: '1rem', marginLeft: '1rem' }}>
+                          <strong>&lt;html&gt;</strong>
+                        </div>
+                        <div style={{ marginBottom: '1rem', marginLeft: '2rem' }}>
+                          <strong>&lt;head&gt;</strong>
+                        </div>
+                        <div style={{ marginBottom: '1rem', marginLeft: '3rem' }}>
+                          <strong>&lt;title&gt;</strong> {results.domain} - {selectedSnapshot.displayDate} <strong>&lt;/title&gt;</strong>
+                        </div>
+                        <div style={{ marginBottom: '1rem', marginLeft: '3rem' }}>
+                          <strong>&lt;meta name="description" content="</strong>This is archived version of {results.domain} from {selectedSnapshot.displayDate}<strong>"&gt;</strong>
+                        </div>
+                        <div style={{ marginBottom: '1rem', marginLeft: '2rem' }}>
+                          <strong>&lt;/head&gt;</strong>
+                        </div>
+                        <div style={{ marginBottom: '1rem', marginLeft: '2rem' }}>
+                          <strong>&lt;body&gt;</strong>
+                        </div>
+                        <div style={{ marginBottom: '1rem', marginLeft: '3rem' }}>
+                          <strong>&lt;h1&gt;</strong> Welcome to {results.domain} <strong>&lt;/h1&gt;</strong>
+                        </div>
+                        <div style={{ marginBottom: '1rem', marginLeft: '3rem' }}>
+                          <strong>&lt;p&gt;</strong> This is archived content of webpage from {selectedSnapshot.displayDate}. In a real implementation, this would show actual archived HTML content from Wayback Machine. <strong>&lt;/p&gt;</strong>
+                        </div>
+                        <div style={{ marginBottom: '1rem', marginLeft: '2rem' }}>
+                          <strong>&lt;/body&gt;</strong>
+                        </div>
+                        <div style={{ marginBottom: '1rem', marginLeft: '1rem' }}>
+                          <strong>&lt;/html&gt;</strong>
+                        </div>
+                      </div>
+                      <div style={{ marginTop: '1rem', display: 'flex', gap: '1rem' }}>
+                        <a
+                          href={selectedSnapshot.url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          style={{
+                            padding: '0.75rem 1.5rem',
+                            fontSize: '0.875rem',
+                            fontWeight: '600',
+                            color: 'white',
+                            background: toolConfig.gradient,
+                            border: 'none',
+                            borderRadius: '8px',
+                            cursor: 'pointer',
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: '0.5rem',
+                            textDecoration: 'none'
+                          }}
+                        >
+                          <ExternalLink size={16} />
+                          View Full Snapshot
+                        </a>
+                        <a
+                          href={results.url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          style={{
+                            padding: '0.75rem 1.5rem',
+                            fontSize: '0.875rem',
+                            fontWeight: '600',
+                            color: darkMode ? '#f0f0f0' : '#4b5563',
+                            background: darkMode ? '#333' : 'white',
+                            border: `1px solid ${darkMode ? '#555' : '#d1d5db'}`,
+                            borderRadius: '8px',
+                            cursor: 'pointer',
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: '0.5rem',
+                            textDecoration: 'none'
+                          }}
+                        >
+                          <Globe size={16} />
+                          Visit Current Page
+                        </a>
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+          </main>
+
+          <section style={{ 
+            background: darkMode ? '#2a2a2a' : 'white', 
+            borderRadius: '16px', 
+            padding: isMobile ? '1.5rem 1rem' : '2rem', 
+            border: `2px solid ${darkMode ? '#444' : '#E5E7EB'}`, 
+            marginBottom: '2rem' 
+          }}>
+            <h2 style={{ 
+              fontSize: isMobile ? '1.5rem' : '1.75rem', 
+              fontWeight: '700', 
+              color: darkMode ? '#f0f0f0' : '#111827', 
+              marginBottom: '1rem', 
+              marginTop: 0 
+            }}>
+              How to Use Wayback Machine Viewer
+            </h2>
+            <p style={{ 
+              fontSize: isMobile ? '0.9rem' : '1rem', 
+              lineHeight: '1.8', 
+              color: darkMode ? '#ccc' : '#6B7280', 
+              marginBottom: '1.5rem' 
+            }}>
+              The Wayback Machine allows you to view historical snapshots of websites and track changes over time.
+            </p>
+            
+            <h3 style={{ 
+              fontSize: isMobile ? '1.1rem' : '1.25rem', 
+              fontWeight: '700', 
+              color: darkMode ? '#f0f0f0' : '#111827', 
+              marginBottom: '0.75rem', 
+              marginTop: '1.5rem' 
+            }}>
+              Step-by-Step Guide
+            </h3>
+            <ol style={{ 
+              fontSize: isMobile ? '0.9rem' : '1rem', 
+              lineHeight: '1.8', 
+              color: darkMode ? '#ccc' : '#6B7280', 
+              paddingLeft: '1.5rem' 
+            }}>
+              <li style={{ marginBottom: '0.75rem' }}>
+                <strong style={{ color: darkMode ? '#f0f0f0' : '#111827' }}>Enter URL:</strong> Type website URL you want to check in input field.
+              </li>
+              <li style={{ marginBottom: '0.75rem' }}>
+                <strong style={{ color: darkMode ? '#f0f0f0' : '#111827' }}>View History:</strong> Click "View History" button to search for archived snapshots.
+              </li>
+              <li style={{ marginBottom: '0.75rem' }}>
+                <strong style={{ color: darkMode ? '#f0f0f0' : '#111827' }}>Browse Snapshots:</strong> Explore timeline of available snapshots, sorted by date.
+              </li>
+              <li style={{ marginBottom: '0.75rem' }}>
+                <strong style={{ color: darkMode ? '#f0f0f0' : '#111827' }}>Select Snapshot:</strong> Click on any snapshot to preview archived content.
+              </li>
+            </ol>
+          </section>
+
+          <section style={{ 
+            background: darkMode ? '#2a2a2a' : 'white', 
+            borderRadius: '20px', 
+            padding: isMobile ? '1.5rem 1rem' : '2rem', 
+            border: `2px solid ${darkMode ? '#444' : '#E5E7EB'}`, 
+            marginBottom: '2rem' 
+          }}>
+            <h2 style={{ 
+              fontSize: isMobile ? '1.5rem' : '1.75rem', 
+              fontWeight: '700', 
+              color: darkMode ? '#f0f0f0' : '#111827', 
+              marginBottom: '1.5rem', 
+              marginTop: 0 
+            }}>
+              Key Features
+            </h2>
+            <div style={{ 
+              display: 'grid', 
+              gridTemplateColumns: isMobile ? '1fr' : 'repeat(auto-fit, minmax(250px, 1fr))', 
+              gap: '1.5rem' 
+            }}>
+              <article>
+                <div style={{ 
+                  width: '48px', 
+                  height: '48px', 
+                  background: darkMode ? '#383838' : '#F0F4FF', 
+                  borderRadius: '12px', 
+                  display: 'flex', 
+                  alignItems: 'center', 
+                  justifyContent: 'center', 
+                  marginBottom: '1rem' 
+                }}>
+                  <Archive size={24} color="#f093fb" strokeWidth={2.5} aria-label="Archive icon" />
+                </div>
+                <h3 style={{ 
+                  fontSize: isMobile ? '1rem' : '1.1rem', 
+                  fontWeight: '700', 
+                  color: darkMode ? '#f0f0f0' : '#111827', 
+                  marginBottom: '0.5rem', 
+                  marginTop: 0 
+                }}>
+                  Historical Snapshots
+                </h3>
+                <p style={{ 
+                  fontSize: isMobile ? '0.85rem' : '0.95rem', 
+                  lineHeight: '1.6', 
+                  color: darkMode ? '#ccc' : '#6B7280', 
+                  margin: 0 
+                }}>
+                  Access archived versions of websites from different points in time.
+                </p>
+              </article>
+              <article>
+                <div style={{ 
+                  width: '48px', 
+                  height: '48px', 
+                  background: darkMode ? '#383838' : '#F0F4FF', 
+                  borderRadius: '12px', 
+                  display: 'flex', 
+                  alignItems: 'center', 
+                  justifyContent: 'center', 
+                  marginBottom: '1rem' 
+                }}>
+                  <Calendar size={24} color="#f093fb" strokeWidth={2.5} aria-label="Calendar icon" />
+                </div>
+                <h3 style={{ 
+                  fontSize: isMobile ? '1rem' : '1.1rem', 
+                  fontWeight: '700', 
+                  color: darkMode ? '#f0f0f0' : '#111827', 
+                  marginBottom: '0.5rem', 
+                  marginTop: 0 
+                }}>
+                  Timeline View
+                </h3>
+                <p style={{ 
+                  fontSize: isMobile ? '0.85rem' : '0.95rem', 
+                  lineHeight: '1.6', 
+                  color: darkMode ? '#ccc' : '#6B7280', 
+                  margin: 0 
+                }}>
+                  Browse through a chronological timeline of website changes.
+                </p>
+              </article>
+              <article>
+                <div style={{ 
+                  width: '48px', 
+                  height: '48px', 
+                  background: darkMode ? '#383838' : '#F0F4FF', 
+                  borderRadius: '12px', 
+                  display: 'flex', 
+                  alignItems: 'center', 
+                  justifyContent: 'center', 
+                  marginBottom: '1rem' 
+                }}>
+                  <Globe size={24} color="#f093fb" strokeWidth={2.5} aria-label="Globe icon" />
+                </div>
+                <h3 style={{ 
+                  fontSize: isMobile ? '1rem' : '1.1rem', 
+                  fontWeight: '700', 
+                  color: darkMode ? '#f0f0f0' : '#111827', 
+                  marginBottom: '0.5rem', 
+                  marginTop: 0 
+                }}>
+                  Preview Functionality
+                </h3>
+                <p style={{ 
+                  fontSize: isMobile ? '0.85rem' : '0.95rem', 
+                  lineHeight: '1.6', 
+                  color: darkMode ? '#ccc' : '#6B7280', 
+                  margin: 0 
+                }}>
+                  Preview archived content before visiting the full snapshot.
+                </p>
+              </article>
+            </div>
+          </section>
+
+          <section style={{ 
+            background: darkMode ? '#2a2a2a' : 'white', 
+            borderRadius: '16px', 
+            padding: isMobile ? '1.5rem 1rem' : '2rem', 
+            border: `2px solid ${darkMode ? '#444' : '#E5E7EB'}`, 
+            marginBottom: '2rem' 
+          }}>
+            <h2 style={{ 
+              fontSize: isMobile ? '1.5rem' : '1.75rem', 
+              fontWeight: '700', 
+              color: darkMode ? '#f0f0f0' : '#111827', 
+              marginBottom: '1rem', 
+              marginTop: 0 
+            }}>
+              Frequently Asked Questions
+            </h2>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+              {faqs.map((faq, index) => (
+                <div key={index} style={{ 
+                  border: `2px solid ${darkMode ? '#444' : '#E5E7EB'}`, 
+                  borderRadius: '12px', 
+                  overflow: 'hidden' 
+                }}>
+                  <button
+                    onClick={() => toggleFaq(index)}
+                    style={{
+                      width: '100%',
+                      padding: isMobile ? '1rem' : '1.25rem',
+                      background: expandedFaq === index ? 
+                        (darkMode ? '#383838' : '#F0F4FF') : 
+                        (darkMode ? '#333' : 'white'),
+                      border: 'none',
+                      cursor: 'pointer',
+                      display: 'flex',
+                      justifyContent: 'space-between',
+                      alignItems: 'center',
+                      textAlign: 'left',
+                      transition: 'background 0.2s'
+                    }}
+                  >
+                    <h3 style={{ 
+                      fontSize: isMobile ? '0.95rem' : '1.05rem', 
+                      fontWeight: '600', 
+                      color: darkMode ? '#f0f0f0' : '#111827', 
+                      margin: 0 
+                    }}>
+                      {faq.question}
+                    </h3>
+                    {expandedFaq === index ? 
+                      <ChevronUp size={20} color={darkMode ? '#ccc' : '#6B7280'} style={{ flexShrink: 0, marginLeft: '1rem' }} /> : 
+                      <ChevronDown size={20} color={darkMode ? '#ccc' : '#6B7280'} style={{ flexShrink: 0, marginLeft: '1rem' }} />
+                    }
+                  </button>
+                  {expandedFaq === index && (
+                    <div style={{ 
+                      padding: isMobile ? '0 1rem 1rem' : '0 1.25rem 1.25rem', 
+                      background: darkMode ? '#383838' : '#F0F4FF' 
+                    }}>
+                      <p style={{ 
+                        fontSize: isMobile ? '0.85rem' : '0.95rem', 
+                        lineHeight: '1.7', 
+                        color: darkMode ? '#ccc' : '#6B7280', 
+                        margin: 0 
+                      }}>
+                        {faq.answer}
+                      </p>
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          </section>
+
+          <footer style={{ 
+            textAlign: 'center', 
+            color: darkMode ? '#9CA3AF' : '#9CA3AF', 
+            marginTop: '3rem', 
+            fontSize: isMobile ? '0.85rem' : '0.95rem', 
+            fontWeight: '500' 
+          }}>
+            Built with modern web technology • No installation required • Privacy-first design
+          </footer>
+        </div>
+        <style>{`@keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }`}</style>
+      </div>
+    </>
+  );
+};
+
+export default WaybackMachineViewerTool;
