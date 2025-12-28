@@ -26,7 +26,7 @@ env:
 jobs:
   plagiarism-check:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 8  # Increased from 10 to 8 minutes to allow for overhead
     
     steps:
     - name: Checkout repository
@@ -70,7 +70,11 @@ jobs:
         CHECK_TYPE: ${{ github.event.inputs.check_type }}
       run: |
         echo "Running plagiarism checker..."
-        python runner/plagiarism_checker.py
+        # Run with timeout to ensure we don't exceed the GitHub Actions limit
+        timeout 300 python runner/plagiarism_checker.py || {
+          echo "Plagiarism check timed out after 5 minutes"
+          exit 1
+        }
         
         # Check if results file was created
         if [ -f results.json ]; then
