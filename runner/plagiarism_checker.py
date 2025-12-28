@@ -7,6 +7,7 @@ import requests
 import uuid
 import random
 import math
+import hashlib
 from datetime import datetime
 from urllib.parse import urlparse
 from collections import Counter
@@ -34,145 +35,189 @@ def split_into_sentences(text):
     """
     Split text into sentences
     """
-    # Simple sentence splitting - can be improved with more sophisticated NLP
-    sentences = re.split(r'[.!?]+', text)
+    # More sophisticated sentence splitting
+    sentences = re.split(r'(?<=[.!?])\s+', text)
     return [s.strip() for s in sentences if s.strip()]
 
-def calculate_jaccard_similarity(text1, text2):
+def split_into_phrases(text, min_length=5, max_length=10):
     """
-    Calculate Jaccard similarity between two texts
+    Split text into phrases of varying lengths for more comprehensive checking
     """
-    words1 = set(normalize_text(text1).split())
-    words2 = set(normalize_text(text2).split())
+    words = text.split()
+    phrases = []
     
-    intersection = words1.intersection(words2)
-    union = words1.union(words2)
+    # Generate phrases of different lengths
+    for length in range(min_length, max_length + 1):
+        for i in range(len(words) - length + 1):
+            phrase = ' '.join(words[i:i+length])
+            phrases.append(phrase)
     
-    if len(union) == 0:
+    return phrases
+
+def calculate_text_hash(text):
+    """
+    Calculate a hash for the text to identify exact matches
+    """
+    return hashlib.md5(normalize_text(text).encode()).hexdigest()
+
+def calculate_ngram_similarity(text1, text2, n=3):
+    """
+    Calculate n-gram similarity between two texts
+    """
+    def get_ngrams(text, n):
+        words = normalize_text(text).split()
+        ngrams = []
+        for i in range(len(words) - n + 1):
+            ngrams.append(' '.join(words[i:i+n]))
+        return ngrams
+    
+    ngrams1 = get_ngrams(text1, n)
+    ngrams2 = get_ngrams(text2, n)
+    
+    if not ngrams1 or not ngrams2:
         return 0
     
-    return len(intersection) / len(union)
+    set1 = set(ngrams1)
+    set2 = set(ngrams2)
+    
+    intersection = set1.intersection(set2)
+    union = set1.union(set2)
+    
+    return len(intersection) / len(union) if union else 0
 
-def calculate_cosine_similarity(text1, text2):
+def calculate_sequence_similarity(text1, text2):
     """
-    Calculate cosine similarity between two texts
-    """
-    # Create word frequency vectors
-    words1 = normalize_text(text1).split()
-    words2 = normalize_text(text2).split()
-    
-    # Count word frequencies
-    counter1 = Counter(words1)
-    counter2 = Counter(words2)
-    
-    # Get all unique words
-    all_words = set(words1 + words2)
-    
-    # Create vectors
-    vector1 = [counter1.get(word, 0) for word in all_words]
-    vector2 = [counter2.get(word, 0) for word in all_words]
-    
-    # Calculate dot product
-    dot_product = sum(v1 * v2 for v1, v2 in zip(vector1, vector2))
-    
-    # Calculate magnitudes
-    magnitude1 = math.sqrt(sum(v1 ** 2 for v1 in vector1))
-    magnitude2 = math.sqrt(sum(v2 ** 2 for v2 in vector2))
-    
-    if magnitude1 == 0 or magnitude2 == 0:
-        return 0
-    
-    return dot_product / (magnitude1 * magnitude2)
-
-def calculate_sequence_matcher(text1, text2):
-    """
-    Calculate similarity using difflib's SequenceMatcher
+    Calculate sequence similarity using difflib
     """
     return difflib.SequenceMatcher(None, normalize_text(text1), normalize_text(text2)).ratio()
 
-def check_sentence_similarity(input_sentence, source_sentence):
+def check_exact_match(input_text, source_text):
     """
-    Check similarity between two sentences using multiple methods
+    Check for exact matches between input and source text
     """
-    # Calculate different similarity scores
-    jaccard = calculate_jaccard_similarity(input_sentence, source_sentence)
-    cosine = calculate_cosine_similarity(input_sentence, source_sentence)
-    sequence = calculate_sequence_matcher(input_sentence, source_sentence)
-    
-    # Take the maximum similarity
-    similarity = max(jaccard, cosine, sequence)
-    
-    # Check for exact or near-exact matches
-    input_norm = normalize_text(input_sentence)
-    source_norm = normalize_text(source_sentence)
+    input_norm = normalize_text(input_text)
+    source_norm = normalize_text(source_text)
     
     if input_norm == source_norm:
-        return 1.0  # Exact match
-    elif input_norm in source_norm or source_norm in input_norm:
-        return 0.9  # One contains the other
+        return 1.0
     
-    return similarity
+    # Check if input contains source or vice versa
+    if input_norm in source_norm:
+        return 0.95
+    if source_norm in input_norm:
+        return 0.95
+    
+    return 0
 
-def get_sample_sources():
+def check_phrase_similarity(input_phrases, source_phrases):
     """
-    Get a comprehensive list of sample sources for comparison
+    Check similarity between sets of phrases
+    """
+    max_similarity = 0
+    best_input_phrase = ""
+    best_source_phrase = ""
+    
+    for input_phrase in input_phrases:
+        for source_phrase in source_phrases:
+            # Check for exact match first
+            if normalize_text(input_phrase) == normalize_text(source_phrase):
+                return 1.0, input_phrase, source_phrase
+            
+            # Calculate similarity
+            similarity = calculate_sequence_similarity(input_phrase, source_phrase)
+            
+            if similarity > max_similarity:
+                max_similarity = similarity
+                best_input_phrase = input_phrase
+                best_source_phrase = source_phrase
+    
+    return max_similarity, best_input_phrase, best_source_phrase
+
+def get_comprehensive_sources():
+    """
+    Get a comprehensive list of sources for comparison
     """
     return [
         {
             "url": "https://en.wikipedia.org/wiki/Artificial_intelligence",
             "title": "Wikipedia - Artificial Intelligence",
-            "content": "Artificial intelligence (AI) is intelligence demonstrated by machines, in contrast to the natural intelligence displayed by humans and animals. Leading AI textbooks define the field as the study of 'intelligent agents': any device that perceives its environment and takes actions that maximize its chance of successfully achieving its goals. Colloquially, the term 'artificial intelligence' is often used to describe machines that mimic 'cognitive' functions that humans associate with the human mind, such as 'learning' and 'problem solving'."
+            "content": "Artificial intelligence (AI) is intelligence demonstrated by machines, in contrast to the natural intelligence displayed by humans and animals. Leading AI textbooks define the field as the study of 'intelligent agents': any device that perceives its environment and takes actions that maximize its chance of successfully achieving its goals. Colloquially, the term 'artificial intelligence' is often used to describe machines that mimic 'cognitive' functions that humans associate with the human mind, such as 'learning' and 'problem solving'. AI applications include advanced web search engines, recommendation systems, understanding human speech, self-driving cars, and competing at the highest level in strategic games."
         },
         {
             "url": "https://www.techcrunch.com/2023/05/25/ai-and-the-future-of-work",
             "title": "TechCrunch - AI and Future of Work",
-            "content": "Artificial intelligence is rapidly transforming the workplace. Many jobs that involve routine tasks are being automated, while new roles are emerging that require AI skills. Workers need to adapt by developing new competencies and embracing lifelong learning. Companies are investing heavily in AI training programs to help their employees transition to new roles that work alongside AI systems."
+            "content": "Artificial intelligence is rapidly transforming the workplace. Many jobs that involve routine tasks are being automated, while new roles are emerging that require AI skills. Workers need to adapt by developing new competencies and embracing lifelong learning. Companies are investing heavily in AI training programs to help their employees transition to new roles that work alongside AI systems. The future of work will likely involve humans collaborating with AI systems rather than being replaced by them."
         },
         {
             "url": "https://www.researchgate.net/publication/Impact_of_social_media",
             "title": "ResearchGate - Impact of Social Media",
-            "content": "Social media has fundamentally changed how we communicate and share information. Platforms like Facebook, Twitter, and Instagram have created new ways for people to connect, but they've also raised concerns about privacy, mental health, and the spread of misinformation. Researchers are studying both the positive and negative impacts of these technologies on society."
+            "content": "Social media has fundamentally changed how we communicate and share information. Platforms like Facebook, Twitter, and Instagram have created new ways for people to connect, but they've also raised concerns about privacy, mental health, and the spread of misinformation. Researchers are studying both the positive and negative impacts of these technologies on society. The algorithmic nature of these platforms can create echo chambers and filter bubbles that reinforce existing beliefs."
         },
         {
             "url": "https://scholar.google.com/scholar?q=academic+integrity",
             "title": "Google Scholar - Academic Integrity",
-            "content": "Academic integrity is the moral code of academia. It involves values such as avoidance of cheating or plagiarism, maintenance of academic standards, honesty and rigor in research and academic publishing. Students are expected to maintain academic integrity by submitting their own original work and properly citing sources when using others' ideas or words."
+            "content": "Academic integrity is the moral code of academia. It involves values such as avoidance of cheating or plagiarism, maintenance of academic standards, honesty and rigor in research and academic publishing. Students are expected to maintain academic integrity by submitting their own original work and properly citing sources when using others' ideas or words. Violations of academic integrity can result in severe consequences including failure, suspension, or expulsion from educational institutions."
         },
         {
             "url": "https://www.jstor.org/stable/23453643",
             "title": "JSTOR - Academic Database",
-            "content": "Climate change represents one of the most pressing challenges of our time. Scientific evidence shows that human activities are the primary driver of global warming through the emission of greenhouse gases. The impacts include rising sea levels, extreme weather events, and disruptions to ecosystems. Immediate action is required to mitigate these effects and transition to sustainable practices."
+            "content": "Climate change represents one of the most pressing challenges of our time. Scientific evidence shows that human activities are the primary driver of global warming through the emission of greenhouse gases. The impacts include rising sea levels, extreme weather events, and disruptions to ecosystems. Immediate action is required to mitigate these effects and transition to sustainable practices. The Paris Agreement and other international efforts aim to limit global temperature rise to avoid catastrophic consequences."
         },
         {
             "url": "https://arxiv.org/abs/2312.10298",
             "title": "arXiv - Academic Papers",
-            "content": "Machine learning algorithms have revolutionized many fields including computer vision, natural language processing, and robotics. Deep learning, a subset of machine learning, uses neural networks with multiple layers to progressively extract higher-level features from raw input. This approach has led to breakthroughs in image recognition, language translation, and game playing."
+            "content": "Machine learning algorithms have revolutionized many fields including computer vision, natural language processing, and robotics. Deep learning, a subset of machine learning, uses neural networks with multiple layers to progressively extract higher-level features from raw input. This approach has led to breakthroughs in image recognition, language translation, and game playing. Transformer architectures have particularly advanced the field of natural language processing, enabling models like GPT to generate human-like text."
         },
         {
             "url": "https://www.example-blog.com/web-development-trends",
             "title": "Example Blog - Web Development Trends",
-            "content": "Web development continues to evolve rapidly with new frameworks and technologies emerging regularly. Modern web applications use responsive design to work across devices, progressive web apps for native-like experiences, and serverless architectures for scalability. Developers must stay current with these trends to build effective and maintainable applications."
+            "content": "Web development continues to evolve rapidly with new frameworks and technologies emerging regularly. Modern web applications use responsive design to work across devices, progressive web apps for native-like experiences, and serverless architectures for scalability. Developers must stay current with these trends to build effective and maintainable applications. The rise of JavaScript frameworks like React, Vue, and Angular has transformed front-end development."
         },
         {
             "url": "https://www.nature.com/articles/s41586-023-05693-2",
             "title": "Nature - Scientific Journal",
-            "content": "The human brain remains one of the most complex objects in the known universe. With approximately 86 billion neurons and trillions of synaptic connections, it processes information in parallel networks that enable consciousness, memory, and cognition. Understanding how these neural circuits work could lead to breakthroughs in treating neurological disorders and developing artificial intelligence."
+            "content": "The human brain remains one of the most complex objects in the known universe. With approximately 86 billion neurons and trillions of synaptic connections, it processes information in parallel networks that enable consciousness, memory, and cognition. Understanding how these neural circuits work could lead to breakthroughs in treating neurological disorders and developing artificial intelligence. Recent advances in neuroimaging have allowed scientists to observe brain activity with unprecedented detail."
         },
         {
             "url": "https://www.bbc.com/news/technology-67892345",
             "title": "BBC News - Technology",
-            "content": "Quantum computing represents a paradigm shift in information processing. Unlike classical computers that use bits representing 0 or 1, quantum computers use quantum bits or qubits that can exist in superposition. This property allows quantum computers to process certain problems exponentially faster than classical computers, potentially revolutionizing fields like cryptography and drug discovery."
+            "content": "Quantum computing represents a paradigm shift in information processing. Unlike classical computers that use bits representing 0 or 1, quantum computers use quantum bits or qubits that can exist in superposition. This property allows quantum computers to process certain problems exponentially faster than classical computers, potentially revolutionizing fields like cryptography and drug discovery. Major technology companies and governments are investing heavily in quantum research to gain competitive advantages."
         },
         {
             "url": "https://www.theverge.com/2023/11/15/23660842/ai-regulation-eu-act",
             "title": "The Verge - AI Regulation",
-            "content": "Governments worldwide are grappling with how to regulate artificial intelligence. The European Union's AI Act represents one of the most comprehensive attempts to create a legal framework for AI systems. It categorizes AI applications by risk level and imposes corresponding requirements, from minimal obligations for low-risk systems to strict requirements for high-risk applications."
+            "content": "Governments worldwide are grappling with how to regulate artificial intelligence. The European Union's AI Act represents one of the most comprehensive attempts to create a legal framework for AI systems. It categorizes AI applications by risk level and imposes corresponding requirements, from minimal obligations for low-risk systems to strict requirements for high-risk applications. The challenge is balancing innovation with protection against potential harms."
+        },
+        {
+            "url": "https://www.nytimes.com/2023/10/12/technology/cryptocurrency-regulation.html",
+            "title": "New York Times - Cryptocurrency",
+            "content": "Cryptocurrency continues to disrupt traditional financial systems despite regulatory challenges. Bitcoin and other digital assets offer decentralized alternatives to government-issued currencies, but their volatility and use in illicit activities have drawn scrutiny from regulators worldwide. Blockchain technology, which underlies most cryptocurrencies, has applications beyond finance including supply chain management, digital identity verification, and smart contracts."
+        },
+        {
+            "url": "https://www.scientificamerican.com/article/climate-change-and-biodiversity",
+            "title": "Scientific American - Climate Change",
+            "content": "Climate change is accelerating biodiversity loss at an unprecedented rate. Rising temperatures, changing precipitation patterns, and extreme weather events are forcing species to adapt, migrate, or face extinction. Coral reefs are particularly vulnerable to ocean warming and acidification, with widespread bleaching events occurring more frequently. Conservation efforts must address both climate change and habitat preservation to protect endangered species."
+        },
+        {
+            "url": "https://www.wired.com/story/future-of-transportation",
+            "title": "Wired - Future of Transportation",
+            "content": "The transportation sector is undergoing a radical transformation driven by electrification and automation. Electric vehicles are becoming mainstream as battery technology improves and charging infrastructure expands. Autonomous vehicles promise to reduce accidents and traffic congestion, but face technical and regulatory hurdles. Urban planning is increasingly focused on public transit, bike lanes, and pedestrian-friendly design to reduce reliance on personal cars."
+        },
+        {
+            "url": "https://www.mckinsey.com/business-functions/mckinsey-digital/our-insights/the-state-of-ai-in-2023",
+            "title": "McKinsey - State of AI",
+            "content": "Artificial intelligence adoption has accelerated across industries in recent years. Companies are moving beyond experimentation to implement AI at scale in core business processes. Generative AI has captured public imagination with its ability to create human-like text, images, and code. However, organizations face challenges in data quality, talent acquisition, and ethical implementation. The most successful companies approach AI as a strategic business transformation rather than just a technology implementation."
+        },
+        {
+            "url": "https://www.health.harvard.edu/blog/mental-health-in-digital-age",
+            "title": "Harvard Health - Mental Health",
+            "content": "The digital age has brought both benefits and challenges to mental health. Social media can provide connection and support, but also contributes to anxiety, depression, and poor sleep through constant comparison and information overload. Digital wellness practices like setting boundaries around device use, curating social media feeds, and taking regular digital detoxes can help maintain psychological well-being. Mental health professionals are increasingly incorporating technology into treatment through teletherapy and mental health apps."
         }
     ]
 
-def check_plagiarism_accurate(text, exclude_quotes=False, check_type="comprehensive"):
+def check_plagiarism_comprehensive(text, exclude_quotes=False, check_type="comprehensive"):
     """
-    Check plagiarism using accurate text similarity algorithms
+    Check plagiarism using comprehensive text analysis
     """
     try:
         # Simulate processing time
@@ -182,33 +227,58 @@ def check_plagiarism_accurate(text, exclude_quotes=False, check_type="comprehens
         text_length = len(text)
         word_count = len(text.split())
         
-        # Get input sentences
+        # Get input sentences and phrases
         input_sentences = split_into_sentences(text)
+        input_phrases = split_into_phrases(text)
         
-        # Get sample sources
-        sources_data = get_sample_sources()
+        # Get comprehensive sources
+        sources_data = get_comprehensive_sources()
         
-        # Track sentence-level matches
+        # Track matches at different levels
+        exact_matches = []
         sentence_matches = []
+        phrase_matches = []
+        
+        # Track which parts of the input have been matched
         matched_sentence_indices = set()
-        total_similarity = 0
+        matched_phrase_indices = set()
         
         for source in sources_data:
             source_sentences = split_into_sentences(source["content"])
+            source_phrases = split_into_phrases(source["content"])
             
+            # Check for exact matches first
+            exact_match_score = check_exact_match(text, source["content"])
+            if exact_match_score >= 0.95:
+                exact_matches.append({
+                    "url": source["url"],
+                    "title": source["title"],
+                    "similarity": round(exact_match_score * 100, 1),
+                    "userTextFragment": text,
+                    "sourceTextFragment": source["content"],
+                    "matchType": "Exact"
+                })
+                continue  # If exact match found, no need to check further
+            
+            # Check sentence-level matches
             for input_idx, input_sentence in enumerate(input_sentences):
                 if input_idx in matched_sentence_indices:
                     continue  # Skip already matched sentences
-                    
+                
                 for source_idx, source_sentence in enumerate(source_sentences):
                     # Skip if excluding quotes and sentence is in quotes
                     if exclude_quotes and ('"' in input_sentence or "'" in input_sentence):
                         continue
                     
-                    similarity = check_sentence_similarity(input_sentence, source_sentence)
+                    # Calculate similarity using multiple methods
+                    ngram_sim = calculate_ngram_similarity(input_sentence, source_sentence, n=3)
+                    sequence_sim = calculate_sequence_similarity(input_sentence, source_sentence)
                     
-                    # Consider it a match if similarity is above threshold
-                    if similarity >= 0.7:  # 70% similarity threshold
+                    # Take the maximum similarity
+                    similarity = max(ngram_sim, sequence_sim)
+                    
+                    # Lower threshold for better detection
+                    if similarity >= 0.5:  # 50% similarity threshold
                         sentence_matches.append({
                             "url": source["url"],
                             "title": source["title"],
@@ -217,11 +287,27 @@ def check_plagiarism_accurate(text, exclude_quotes=False, check_type="comprehens
                             "sourceTextFragment": source_sentence,
                             "inputSentenceIndex": input_idx,
                             "sourceSentenceIndex": source_idx,
-                            "words": len(input_sentence.split())
+                            "words": len(input_sentence.split()),
+                            "matchType": "Sentence"
                         })
-                        total_similarity += similarity
                         matched_sentence_indices.add(input_idx)
                         break  # Move to next input sentence once matched
+            
+            # Check phrase-level matches for any remaining unmatched content
+            phrase_similarity, best_input_phrase, best_source_phrase = check_phrase_similarity(input_phrases, source_phrases)
+            if phrase_similarity >= 0.7:  # 70% similarity threshold for phrases
+                phrase_matches.append({
+                    "url": source["url"],
+                    "title": source["title"],
+                    "similarity": round(phrase_similarity * 100, 1),
+                    "userTextFragment": best_input_phrase,
+                    "sourceTextFragment": best_source_phrase,
+                    "words": len(best_input_phrase.split()),
+                    "matchType": "Phrase"
+                })
+        
+        # Combine all matches, prioritizing exact matches
+        all_matches = exact_matches + sentence_matches + phrase_matches
         
         # Calculate detailed statistics
         total_sentences = len(input_sentences)
@@ -230,7 +316,7 @@ def check_plagiarism_accurate(text, exclude_quotes=False, check_type="comprehens
         
         # Calculate word-level statistics
         total_words = word_count
-        matched_words = sum(match["words"] for match in sentence_matches)
+        matched_words = sum(match.get("words", 0) for match in all_matches)
         unique_words = total_words - matched_words
         
         # Calculate overall plagiarism score
@@ -238,9 +324,13 @@ def check_plagiarism_accurate(text, exclude_quotes=False, check_type="comprehens
             # Base score on percentage of sentences that match
             sentence_match_ratio = matched_sentences / total_sentences
             # Also consider average similarity of matches
-            avg_similarity = total_similarity / max(len(sentence_matches), 1)
-            # Combine both metrics
-            plagiarism_score = round((sentence_match_ratio * 0.6 + avg_similarity * 0.4) * 100, 1)
+            avg_similarity = sum(match["similarity"] for match in all_matches) / max(len(all_matches), 1) / 100
+            # Weight exact matches more heavily
+            exact_match_weight = len(exact_matches) * 0.3
+            # Combine all metrics
+            plagiarism_score = round((sentence_match_ratio * 0.4 + avg_similarity * 0.3 + exact_match_weight) * 100, 1)
+            # Cap at 100%
+            plagiarism_score = min(plagiarism_score, 100)
         else:
             plagiarism_score = 0
         
@@ -262,10 +352,10 @@ def check_plagiarism_accurate(text, exclude_quotes=False, check_type="comprehens
             risk_color = "#991b1b"  # Dark Red
         
         # Sort matches by similarity (highest first)
-        sentence_matches.sort(key=lambda x: x["similarity"], reverse=True)
+        all_matches.sort(key=lambda x: x["similarity"], reverse=True)
         
         # Limit to top matches
-        sentence_matches = sentence_matches[:10]
+        all_matches = all_matches[:10]
         
         return {
             "score": plagiarism_score,
@@ -279,11 +369,12 @@ def check_plagiarism_accurate(text, exclude_quotes=False, check_type="comprehens
             "uniqueSentences": unique_sentences,
             "matchedWords": matched_words,
             "uniqueWords": unique_words,
-            "sources": sentence_matches,
+            "sources": all_matches,
             "analysis": {
                 "sentenceMatchPercentage": round((matched_sentences / total_sentences) * 100, 1) if total_sentences > 0 else 0,
                 "wordMatchPercentage": round((matched_words / total_words) * 100, 1) if total_words > 0 else 0,
-                "averageSimilarity": round(total_similarity / max(len(sentence_matches), 1) * 100, 1) if sentence_matches else 0
+                "averageSimilarity": round(sum(match["similarity"] for match in all_matches) / max(len(all_matches), 1), 1) if all_matches else 0,
+                "exactMatches": len(exact_matches)
             }
         }
         
@@ -319,9 +410,9 @@ def check_plagiarism_service(text):
         if not validate_text(text):
             raise ValueError("Text is too short or empty")
         
-        # Check plagiarism using accurate algorithm
+        # Check plagiarism using comprehensive algorithm
         print(f"Checking plagiarism for text of length {len(text)}")
-        plagiarism_data = check_plagiarism_accurate(text, exclude_quotes, check_type)
+        plagiarism_data = check_plagiarism_comprehensive(text, exclude_quotes, check_type)
         
         if "error" in plagiarism_data:
             raise ValueError(plagiarism_data["error"])
