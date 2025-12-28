@@ -7,11 +7,11 @@ on:
         description: 'Original URL to shorten'
         required: true
       custom_alias:
-        description: 'Custom alias for the short URL'
+        description: 'Custom alias for short URL'
         required: false
         default: ''
       password_protected:
-        description: 'Password protect the link'
+        description: 'Password protect link'
         required: false
         default: 'false'
       expiration_date:
@@ -19,7 +19,7 @@ on:
         required: false
         default: ''
       track_analytics:
-        description: 'Track analytics for the link'
+        description: 'Track analytics for link'
         required: false
         default: 'true'
       session_id:
@@ -81,6 +81,56 @@ jobs:
         echo "Shortening URL: $ORIGINAL_URL"
         python runner/url_shortener.py
         
+    - name: Create redirect page
+      run: |
+        if [ -f results.json ]; then
+          # Extract short code and create redirect page
+          SHORT_CODE=$(jq -r '.short_code' results.json)
+          ORIGINAL_URL=$(jq -r '.original_url' results.json)
+          
+          # Create redirect directory
+          mkdir -p redirects
+          
+          # Create HTML redirect page
+          cat > redirects/${SHORT_CODE}.html << 'EOF'
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta http-equiv="refresh" content="0; url=${ORIGINAL_URL}">
+    <title>Redirecting...</title>
+    <script>
+        // JavaScript redirect as fallback
+        window.location.href = "${ORIGINAL_URL}";
+    </script>
+</head>
+<body>
+    <p>Redirecting to <a href="${ORIGINAL_URL}">${ORIGINAL_URL}</a>...</p>
+</body>
+</html>
+EOF
+          
+          echo "Created redirect page: redirects/${SHORT_CODE}.html"
+        fi
+        
+    - name: Deploy redirect page
+      run: |
+        if [ -d redirects ]; then
+          echo "Deploying redirect pages..."
+          # In a real implementation, this would deploy to a web server
+          # For demo, we'll just list what would be deployed
+          ls -la redirects/
+          
+          # Create deployment info
+          cat > deployment_info.json << 'EOF'
+{
+  "deployed_files": $(ls redirects/ | jq -R . | jq -s .),
+  "base_url": "https://short.ly",
+  "deployment_time": "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+}
+EOF
+        fi
+        
     - name: Process results
       run: |
         # Check if results file exists
@@ -99,6 +149,7 @@ jobs:
               echo "Short Code: $(jq -r '.short_code' results.json)"
               echo "Password Protected: $(jq -r '.password_protected' results.json)"
               echo "Track Analytics: $(jq -r '.track_analytics' results.json)"
+              echo "Redirect page created: redirects/$(jq -r '.short_code' results.json).html"
             else
               echo "Error: $(jq -r '.message' results.json)"
             fi
@@ -119,4 +170,6 @@ jobs:
         path: |
           results.json
           url_shortener_results_${{ env.SESSION_ID }}.json
+          redirects/
+          deployment_info.json
         retention-days: 7
