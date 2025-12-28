@@ -4,22 +4,16 @@ on:
   workflow_dispatch:
     inputs:
       target:
-        description: 'Target domain or IP address to trace'
+        description: 'Target server or IP address to trace'
         required: true
-        default: 'example.com'
-      max_hops:
-        description: 'Maximum number of hops to trace'
-        required: false
-        default: '30'
+        default: 'google.com'
       session_id:
         description: 'Session ID for tracking'
         required: false
         default: ''
-  repository_dispatch:
-    types: [traceroute-request]
 
 jobs:
-  trace-route:
+  traceroute:
     runs-on: ubuntu-latest
     
     steps:
@@ -36,33 +30,15 @@ jobs:
         python -m pip install --upgrade pip
         pip install requests
         
-    - name: Extract inputs from workflow_dispatch
-      if: github.event_name == 'workflow_dispatch'
-      run: |
-        echo "TARGET=${{ github.event.inputs.target }}" >> $GITHUB_ENV
-        echo "MAX_HOPS=${{ github.event.inputs.max_hops || '30' }}" >> $GITHUB_ENV
-        echo "SESSION_ID=${{ github.event.inputs.session_id || '' }}" >> $GITHUB_ENV
-        
-    - name: Extract inputs from repository_dispatch
-      if: github.event_name == 'repository_dispatch'
-      run: |
-        echo "TARGET=${{ github.event.client_payload.target }}" >> $GITHUB_ENV
-        echo "MAX_HOPS=30" >> $GITHUB_ENV
-        echo "SESSION_ID=${{ github.event.client_payload.session_id || '' }}" >> $GITHUB_ENV
-        
-    - name: Debug environment
-      run: |
-        echo "Current directory: $(pwd)"
-        echo "Files in current directory:"
-        ls -la
-        echo "Session ID: $SESSION_ID"
-        echo "Target: $TARGET"
-        echo "Max hops: $MAX_HOPS"
-        
     - name: Generate session ID if not provided
-      if: env.SESSION_ID == ''
+      if: github.event.inputs.session_id == ''
       run: |
         echo "SESSION_ID=$(date +%s)-$(shuf -i 1000-9999 -n 1)" >> $GITHUB_ENV
+        
+    - name: Use provided session ID
+      if: github.event.inputs.session_id != ''
+      run: |
+        echo "SESSION_ID=${{ github.event.inputs.session_id }}" >> $GITHUB_ENV
         
     - name: Create session marker
       run: |
@@ -78,72 +54,47 @@ jobs:
         path: session-markers/
         retention-days: 1
         
-    - name: Trace route
+    - name: Run traceroute
       env:
-        TARGET: ${{ env.TARGET }}
-        MAX_HOPS: ${{ env.MAX_HOPS }}
+        TARGET: ${{ github.event.inputs.target }}
         SESSION_ID: ${{ env.SESSION_ID }}
       run: |
-        echo "Tracing route to $TARGET with max hops: $MAX_HOPS"
+        echo "Running traceroute to $TARGET"
         python runner/traceroute_tool.py
         
     - name: Process results
       run: |
         # Check if results file exists
-        RESULTS_FILE="results.json"
-        
-        # If the primary results file doesn't exist, check fallback locations
-        if [ ! -f "$RESULTS_FILE" ]; then
-          echo "Primary results file not found, checking fallback locations"
+        if [ -f results.json ]; then
+          echo "Results file found"
+          # Create a copy with session ID in the filename
+          cp results.json traceroute_results_${{ env.SESSION_ID }}.json
           
-          # Check home directory
-          if [ -f ~/results.json ]; then
-            echo "Found results in home directory"
-            cp ~/results.json "$RESULTS_FILE"
-          # Check /tmp directory
-          elif [ -f "/tmp/results_${{ env.SESSION_ID }}.json" ]; then
-            echo "Found results in /tmp directory"
-            cp "/tmp/results_${{ env.SESSION_ID }}.json" "$RESULTS_FILE"
+          # Display results summary
+          echo "Results summary:"
+          if command -v jq &> /dev/null; then
+            jq -r '.status' results.json
+            if [ "$(jq -r '.status' results.json)" = "success" ]; then
+              echo "Target: $(jq -r '.target' results.json)"
+              echo "Hop count: $(jq -r '.data.hopCount' results.json)"
+              echo "Total time: $(jq -r '.data.totalTime' results.json)ms"
+              
+              echo "First few hops:"
+              jq -r '.data.hops[:3] | .[] | "Hop \(.hop): \(.ip) (\(.hostname)) - \(.times)ms"' results.json
+            else
+              echo "Error: $(jq -r '.message' results.json)"
+            fi
           else
-            echo "Results file not found in any location"
-            # Create a minimal error result file
-            cat > "$RESULTS_FILE" << EOF
-{
-  "status": "error",
-  "message": "Results file not found",
-  "session_id": "${{ env.SESSION_ID }}"
-}
-EOF
-          fi
-        fi
-        
-        # Display results summary
-        echo "Results summary:"
-        if command -v jq &> /dev/null; then
-          jq -r '.status' "$RESULTS_FILE"
-          if [ "$(jq -r '.status' "$RESULTS_FILE")" = "success" ]; then
-            echo "Target: $(jq -r '.target' "$RESULTS_FILE")"
-            echo "Target IP: $(jq -r '.target_ip' "$RESULTS_FILE")"
-            echo "Total hops: $(jq -r '.data.totalHops' "$RESULTS_FILE")"
-            echo "Total time: $(jq -r '.data.totalTime' "$RESULTS_FILE")ms"
-            echo "Max hops: $(jq -r '.data.maxHops' "$RESULTS_FILE")"
-            
-            # Display first few hops
-            echo "First 5 hops:"
-            jq -r '.data.hops[:5] | .[] | "Hop \(.hop): \(.ip) - \(.avgTime)ms"' "$RESULTS_FILE"
-          else
-            echo "Error: $(jq -r '.message' "$RESULTS_FILE")"
+            echo "jq not available, displaying raw JSON"
+            cat results.json
           fi
         else
-          echo "jq not available, displaying raw JSON"
-          cat "$RESULTS_FILE"
+          echo "Results file not found"
+          exit 1
         fi
         
-        # Create a copy with session ID in the filename
-        cp "$RESULTS_FILE" "traceroute_results_${{ env.SESSION_ID }}.json"
-        
     - name: Upload results
-      if: always()  # Always upload results, even if previous steps failed
+      if: always()
       uses: actions/upload-artifact@v4
       with:
         name: traceroute-results-${{ env.SESSION_ID }}
