@@ -1,0 +1,72 @@
+name: Website Safety Checker
+
+on:
+  workflow_dispatch:
+    inputs:
+      url:
+        description: 'Website URL to check'
+        required: true
+        default: 'https://example.com'
+      session_id:
+        description: 'Session ID for tracking'
+        required: false
+        default: ''
+
+env:
+  PYTHONUNBUFFERED: 1
+
+jobs:
+  safety-check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.9'
+        
+    - name: Generate session ID if not provided
+      if: github.event.inputs.session_id == ''
+      run: |
+        echo "SESSION_ID=$(date +%s)-$(shuf -i 1000-9999 -n 1)" >> $GITHUB_ENV
+        
+    - name: Use provided session ID
+      if: github.event.inputs.session_id != ''
+      run: |
+        echo "SESSION_ID=${{ github.event.inputs.session_id }}" >> $GITHUB_ENV
+        
+    - name: Check Website Safety
+      env:
+        URL: ${{ github.event.inputs.url }}
+        SESSION_ID: ${{ env.SESSION_ID }}
+      run: |
+        echo "Running website safety check for: $URL"
+        python runner/website_safety_checker.py
+        
+    - name: Upload results
+      uses: actions/upload-artifact@v4
+      with:
+        name: safety-results-${{ env.SESSION_ID }}
+        path: results.json
+        retention-days: 1
+        
+    - name: Create summary
+      run: |
+        if [ -f results.json ]; then
+          SCORE=$(jq -r '.data.score // 0' results.json)
+          IS_SAFE=$(jq -r '.data.isSafe // false' results.json)
+          RISK_LEVEL=$(jq -r '.data.riskLevel // "Unknown"' results.json)
+          
+          echo "🔒 **Website Safety Check Results**" >> $GITHUB_STEP_SUMMARY
+          echo "- **URL**: $URL" >> $GITHUB_STEP_SUMMARY
+          echo "- **Safety Score**: $SCORE/100" >> $GITHUB_STEP_SUMMARY
+          echo "- **Status**: $([ "$IS_SAFE" = "true" ] && echo "✅ Safe" || echo "⚠️ Unsafe")" >> $GITHUB_STEP_SUMMARY
+          echo "- **Risk Level**: $RISK_LEVEL" >> $GITHUB_STEP_SUMMARY
+          echo "- **Session ID**: $SESSION_ID" >> $GITHUB_STEP_SUMMARY
+        else
+          echo "❌ **Safety Check Failed**" >> $GITHUB_STEP_SUMMARY
+        fi
