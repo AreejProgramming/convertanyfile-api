@@ -49,6 +49,11 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y ffmpeg
 
+      - name: Setup cookies directory
+        run: |
+          mkdir -p /tmp/yt_cookies
+          chmod 755 /tmp/yt_cookies
+
       - name: Process YouTube Video
         id: process_video
         env:
