@@ -8,8 +8,6 @@ import uuid
 import re
 import yt_dlp
 from datetime import datetime
-import tempfile
-import requests
 
 def generate_session_id():
     return str(uuid.uuid4())
