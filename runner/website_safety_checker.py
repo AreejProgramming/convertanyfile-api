@@ -62,7 +62,12 @@ def check_domain_length(domain):
 
 def check_tld(domain):
     """Check for suspicious TLD"""
-    tld = domain[domain.lastIndexOf('.'):] if '.' in domain else ''
+    # Use Python's rfind() instead of JavaScript's lastIndexOf()
+    if '.' in domain:
+        tld = domain[domain.rfind('.'):]
+    else:
+        tld = ''
+    
     if tld in SUSPICIOUS_TLDS:
         return {'risk': 'high', 'message': f'Suspicious TLD: {tld}'}
     else:
@@ -237,19 +242,24 @@ def check_website_safety(url):
             'subdomainInfo': checks['subdomainAbuse']['message'],
             'ipAddressInfo': checks['ipAddress']['message'] if checks['ipAddress']['detected'] else 'Using proper domain name'
         },
-        'warnings': [
-            not checks['https']['secure'] and 'Not using HTTPS',
-            checks['maliciousPatterns']['detected'] and 'Suspicious pattern detected',
-            checks['typosquatting']['detected'] and 'Possible typosquatting',
-            checks['specialChars']['detected'] and 'Contains unusual characters',
-            checks['ipAddress']['detected'] and 'Using IP address',
-            checks['tld']['risk'] == 'high' and 'Suspicious TLD detected',
-            checks['domainLength']['risk'] == 'high' and 'Unusually long domain'
-        ]
+        'warnings': []
     }
     
-    # Filter out None values from warnings
-    results['warnings'] = [w for w in results['warnings'] if w]
+    # Add warnings
+    if not checks['https']['secure']:
+        results['warnings'].append('Not using HTTPS')
+    if checks['maliciousPatterns']['detected']:
+        results['warnings'].append('Suspicious pattern detected')
+    if checks['typosquatting']['detected']:
+        results['warnings'].append('Possible typosquatting')
+    if checks['specialChars']['detected']:
+        results['warnings'].append('Contains unusual characters')
+    if checks['ipAddress']['detected']:
+        results['warnings'].append('Using IP address')
+    if checks['tld']['risk'] == 'high':
+        results['warnings'].append('Suspicious TLD detected')
+    if checks['domainLength']['risk'] == 'high':
+        results['warnings'].append('Unusually long domain')
     
     return results
 
@@ -290,6 +300,9 @@ def main():
         
     except Exception as e:
         print(f"ERROR: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        
         error_result = {
             "status": "error",
             "message": str(e),
