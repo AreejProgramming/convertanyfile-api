@@ -108,14 +108,14 @@ jobs:
           name: video-download-${{ github.event.inputs.session_id }}
           path: |
             video_${{ github.event.inputs.session_id }}.*
-            video_download_${{ github.event.inputs.session_id }}.json
-            results_${{ github.event.inputs.session_id }}.json
-            error_${{ github.event.inputs.session_id }}.json
+            video_download_${ github.event.inputs.session_id }.json
+            results_${ github.event.inputs.session_id }.json
+            error_${ github.event.inputs.session_id }.json
           retention-days: 1
 
       - name: Upload Session Marker
         uses: actions/upload-artifact@v4
         with:
           name: session-marker-${{ github.event.inputs.session_id }}
-          path: session_marker_${{ github.event.inputs.session_id }}.txt
+          path: session_marker_${ github.event.inputs.session_id }.txt
           retention-days: 1
