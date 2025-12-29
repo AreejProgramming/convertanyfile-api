@@ -6,8 +6,8 @@ import time
 import sys
 import uuid
 import re
-import yt_dlp
 import requests
+import subprocess
 from datetime import datetime
 
 def generate_session_id():
@@ -106,6 +106,13 @@ def get_video_info_ytdlp(url):
     """
     print(f"Fetching video info using yt-dlp for: {url}")
     
+    # First, update yt-dlp to the latest version
+    try:
+        print("Updating yt-dlp to the latest version...")
+        subprocess.run([sys.executable, "-m", "pip", "install", "--upgrade", "yt-dlp"], check=True)
+    except subprocess.CalledProcessError as e:
+        print(f"Failed to update yt-dlp: {e}")
+    
     # Configure yt-dlp options with multiple fallback methods
     ydl_opts = {
         'quiet': True,
@@ -135,6 +142,8 @@ def get_video_info_ytdlp(url):
     }
     
     try:
+        import yt_dlp
+        
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(url, download=False)
             
@@ -238,6 +247,13 @@ def download_video(url, quality, format_type, session_id):
     """
     print(f"Downloading video: {url}, Quality: {quality}, Format: {format_type}")
     
+    # First, update yt-dlp to the latest version
+    try:
+        print("Updating yt-dlp to the latest version...")
+        subprocess.run([sys.executable, "-m", "pip", "install", "--upgrade", "yt-dlp"], check=True)
+    except subprocess.CalledProcessError as e:
+        print(f"Failed to update yt-dlp: {e}")
+    
     # Create output filename
     video_id = extract_video_id(url)
     output_template = f'video_{session_id}.%(ext)s'
@@ -292,6 +308,8 @@ def download_video(url, quality, format_type, session_id):
             ydl_opts['format'] = f'best[height<={quality.replace("p", "")}]+bestaudio/best[height<={quality.replace("p", "")}]'
     
     try:
+        import yt_dlp
+        
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             ydl.download([url])
             
