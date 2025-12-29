@@ -7,6 +7,7 @@ import sys
 import uuid
 import re
 import yt_dlp
+import requests
 from datetime import datetime
 
 def generate_session_id():
@@ -21,42 +22,95 @@ def extract_video_id(url):
     match = re.search(regex, url)
     return match.group(1) if match else None
 
-def get_youtube_cookies():
+def get_video_info_api(video_id):
     """
-    Get YouTube cookies from a public source or generate basic ones
+    Get video information using YouTube Data API
     """
-    # Try to use a public cookie file or create a basic one
-    cookies_dir = '/tmp/yt_cookies'
-    os.makedirs(cookies_dir, exist_ok=True)
-    cookie_file = os.path.join(cookies_dir, 'youtube_cookies.txt')
+    api_key = os.environ.get("YOUTUBE_API_KEY")
+    if not api_key:
+        raise Exception("YouTube API key not configured")
     
-    # Create a basic cookie file if it doesn't exist
-    if not os.path.exists(cookie_file):
-        with open(cookie_file, 'w') as f:
-            f.write("""# Netscape HTTP Cookie File
-# This is a generated file for yt-dlp
-youtube.com	TRUE	/	FALSE	2147483647	PREF	hl=en\&gl=US
-youtube.com	TRUE	/	FALSE	2147483647	VISITOR_INFO1_LIVE	1
-youtube.com	TRUE	/	FALSE	2147483647	YSC	1
-""")
+    url = f"https://www.googleapis.com/youtube/v3/videos"
+    params = {
+        'part': 'snippet,statistics,contentDetails',
+        'id': video_id,
+        'key': api_key
+    }
     
-    return cookie_file
+    response = requests.get(url, params=params)
+    if response.status_code != 200:
+        raise Exception(f"YouTube API request failed: {response.status_code}")
+    
+    data = response.json()
+    if not data.get('items'):
+        raise Exception("Video not found")
+    
+    item = data['items'][0]
+    snippet = item['snippet']
+    statistics = item['statistics']
+    content_details = item['contentDetails']
+    
+    # Parse duration
+    duration_str = content_details.get('duration', 'PT0S')
+    duration = parse_duration(duration_str)
+    
+    return {
+        'id': item['id'],
+        'title': snippet.get('title'),
+        'thumbnail': snippet.get('thumbnails', {}).get('high', {}).get('url'),
+        'duration': duration,
+        'views': int(statistics.get('viewCount', 0)),
+        'uploadDate': snippet.get('publishedAt'),
+        'channel': snippet.get('channelTitle'),
+        'description': snippet.get('description'),
+        'qualities': ['360p', '480p', '720p', '1080p'],  # Default qualities
+        'availableFormats': []  # Will be populated by yt-dlp
+    }
+
+def parse_duration(duration_str):
+    """
+    Parse ISO 8601 duration string to seconds
+    """
+    pattern = r'PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?'
+    match = re.match(pattern, duration_str)
+    if not match:
+        return 0
+    
+    hours = int(match.group(1) or 0)
+    minutes = int(match.group(2) or 0)
+    seconds = int(match.group(3) or 0)
+    
+    return hours * 3600 + minutes * 60 + seconds
 
 def get_video_info(url):
     """
-    Get video information from YouTube
+    Get video information from YouTube (try API first, then yt-dlp)
     """
-    print(f"Fetching video info for: {url}")
+    video_id = extract_video_id(url)
+    if not video_id:
+        raise Exception("Invalid YouTube URL")
     
-    # Get cookies
-    cookie_file = get_youtube_cookies()
+    try:
+        # Try YouTube API first
+        print(f"Fetching video info using API for: {video_id}")
+        return get_video_info_api(video_id)
+    except Exception as e:
+        print(f"API method failed: {str(e)}")
+        # Fall back to yt-dlp
+        print("Falling back to yt-dlp...")
+        return get_video_info_ytdlp(url)
+
+def get_video_info_ytdlp(url):
+    """
+    Get video information using yt-dlp with enhanced settings
+    """
+    print(f"Fetching video info using yt-dlp for: {url}")
     
-    # Configure yt-dlp options with more robust settings
+    # Configure yt-dlp options with multiple fallback methods
     ydl_opts = {
         'quiet': True,
         'no_warnings': True,
         'extract_flat': False,
-        'cookiefile': cookie_file,
         'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
         'referer': 'https://www.youtube.com/',
         'no_check_certificate': True,
@@ -124,7 +178,7 @@ def get_video_info(url):
                 'availableFormats': available_formats
             }
     except Exception as e:
-        print(f"Error getting video info: {str(e)}")
+        print(f"yt-dlp method failed: {str(e)}")
         # Try alternative method if first attempt fails
         try:
             print("Trying alternative method...")
@@ -180,12 +234,9 @@ def get_video_info(url):
 
 def download_video(url, quality, format_type, session_id):
     """
-    Download YouTube video
+    Download YouTube video using enhanced yt-dlp settings
     """
     print(f"Downloading video: {url}, Quality: {quality}, Format: {format_type}")
-    
-    # Get cookies
-    cookie_file = get_youtube_cookies()
     
     # Create output filename
     video_id = extract_video_id(url)
@@ -197,7 +248,6 @@ def download_video(url, quality, format_type, session_id):
         'quiet': True,
         'no_warnings': True,
         'progress_hooks': [progress_hook],
-        'cookiefile': cookie_file,
         'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
         'referer': 'https://www.youtube.com/',
         'no_check_certificate': True,
@@ -231,7 +281,7 @@ def download_video(url, quality, format_type, session_id):
                 'preferredcodec': 'mp3',
                 'preferredquality': '192',
             }],
-            'ffmpeg_location': '/usr/bin/ffmpeg',  # Path to ffmpeg in GitHub Actions
+            'ffmpeg_location': '/usr/bin/ffmpeg',
         })
     else:
         # Video and audio
