@@ -151,10 +151,30 @@ def progress_hook(d):
     elif d['status'] == 'finished':
         print("Download completed")
 
-# Update the main function in runner/youtube_downloader.py
-
 def main():
-    # ... existing code ...
+    # Get session ID from environment variable
+    session_id = os.environ.get("SESSION_ID", generate_session_id())
+    
+    # Get action type from environment variable
+    action = os.environ.get("ACTION", "info")
+    
+    # Get video URL from environment variable
+    video_url = os.environ.get("VIDEO_URL")
+    
+    if not video_url:
+        print("ERROR: VIDEO_URL environment variable not set.")
+        print(f"results={json.dumps({'status': 'error', 'message': 'VIDEO_URL environment variable not set.'})}")
+        sys.exit(1)
+    
+    print(f"Session ID: {session_id}")
+    print(f"Action: {action}")
+    print(f"Video URL: {video_url}")
+    
+    results = {
+        "status": "error", 
+        "message": "Operation failed to start.",
+        "session_id": session_id
+    }
     
     try:
         if action == "info":
@@ -175,7 +195,11 @@ def main():
             print(f"Results saved to {output_file}")
             
         elif action == "download":
-            # ... existing download code ...
+            # Download video
+            quality = os.environ.get("QUALITY", "720p")
+            format_type = os.environ.get("FORMAT", "mp4")
+            
+            downloaded_file = download_video(video_url, quality, format_type, session_id)
             
             results = {
                 "status": "success",
@@ -210,5 +234,6 @@ def main():
     # Always output the results, even if there was an error
     print(f"results={json.dumps(results)}")
     return results
+
 if __name__ == "__main__":
     main()
