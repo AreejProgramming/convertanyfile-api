@@ -1,0 +1,118 @@
+# File: .github/workflows/website-screenshot-generator.yml
+
+name: Run Website Screenshot Generation
+
+on:
+  workflow_dispatch:
+    inputs:
+      url:
+        description: 'Website URL to capture'
+        required: true
+        type: string
+      device:
+        description: 'Device type (desktop, tablet, mobile)'
+        required: true
+        default: 'desktop'
+        type: string
+      format:
+        description: 'Image format (png, jpg)'
+        required: true
+        default: 'png'
+        type: string
+      quality:
+        description: 'Image quality (high, medium, low)'
+        required: true
+        default: 'high'
+        type: string
+      full_page:
+        description: 'Capture full page (true, false)'
+        required: true
+        default: 'true'
+        type: string
+      session_id:
+        description: 'Unique session identifier'
+        required: true
+        type: string
+
+jobs:
+  capture:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install requests pillow selenium
+
+      - name: Set up Chrome
+        uses: browser-actions/setup-chrome@latest
+        with:
+          chrome-version: latest
+
+      - name: Set up ChromeDriver
+        uses: nanasess/setup-chromedriver@master
+
+      - name: Run Screenshot Capture
+        id: run_capture
+        env:
+          TARGET_URL: ${{ github.event.inputs.url }}
+          DEVICE: ${{ github.event.inputs.device }}
+          FORMAT: ${{ github.event.inputs.format }}
+          QUALITY: ${{ github.event.inputs.quality }}
+          FULL_PAGE: ${{ github.event.inputs.full_page }}
+          SESSION_ID: ${{ github.event.inputs.session_id }}
+        run: |
+          # Create a session marker file for easier tracking
+          echo "Session ID: $SESSION_ID" > session_marker_${SESSION_ID}.txt
+          echo "URL: $TARGET_URL" >> session_marker_${SESSION_ID}.txt
+          echo "Device: $DEVICE" >> session_marker_${SESSION_ID}.txt
+          echo "Format: $FORMAT" >> session_marker_${SESSION_ID}.txt
+          echo "Timestamp: $(date +%s)" >> session_marker_${SESSION_ID}.txt
+          
+          # Run the Python script and capture both stdout and stderr
+          python runner/website_screenshot_generator.py > script_output.txt 2>&1 || true
+          
+          # Display the output for debugging
+          echo "=== Script Output ==="
+          cat script_output.txt
+          
+          # Try to find the results in the script output
+          if grep -q "results=" script_output.txt; then
+            # Extract the JSON results
+            grep "results=" script_output.txt | sed 's/results=//' > "screenshot_results_${SESSION_ID}.json"
+            echo "Results extracted to screenshot_results_${SESSION_ID}.json"
+          else
+            # If no results found, create an error response
+            echo '{"status": "error", "message": "No results found in script output"}' > "screenshot_results_${SESSION_ID}.json"
+          fi
+          
+          # Display the extracted results for debugging
+          echo "=== Extracted Results ==="
+          cat "screenshot_results_${SESSION_ID}.json"
+          
+          # Save the file path for the next step
+          echo "output_file=screenshot_results_${SESSION_ID}.json" >> $GITHUB_OUTPUT
+
+      - name: Upload Results as Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: screenshot-results-${{ github.event.inputs.session_id }}
+          path: |
+            screenshot_${{ github.event.inputs.session_id }}.*
+            screenshot_metadata_${{ github.event.inputs.session_id }}.json
+            screenshot_results_${{ github.event.inputs.session_id }}.json
+          retention-days: 1
+          
+      - name: Upload Session Marker
+        uses: actions/upload-artifact@v4
+        with:
+          name: session-marker-${{ github.event.inputs.session_id }}
+          path: session_marker_${{ github.event.inputs.session_id }}.txt
+          retention-days: 1
