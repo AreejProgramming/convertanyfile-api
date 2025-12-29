@@ -51,7 +51,6 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     
-    # Use a concurrency group to limit concurrent jobs
     concurrency:
       group: screenshot-${{ github.event.inputs.session_id || github.run_id }}
       cancel-in-progress: false
@@ -65,76 +64,12 @@ jobs:
       with:
         python-version: '3.9'
         
-    - name: Install system dependencies
+    - name: Install dependencies
       run: |
         sudo apt-get update
-        sudo apt-get install -y \
-          wget \
-          gnupg \
-          ca-certificates \
-          fonts-liberation \
-          libasound2t64 \
-          libatk-bridge2.0-0 \
-          libatk1.0-0 \
-          libc6 \
-          libcairo2 \
-          libcups2 \
-          libdbus-1-3 \
-          libexpat1 \
-          libfontconfig1 \
-          libgbm1 \
-          libgcc1 \
-          libgdk-pixbuf2.0-0 \
-          libglib2.0-0 \
-          libgtk-3-0 \
-          libnspr4 \
-          libnss3 \
-          libpango-1.0-0 \
-          libpangocairo-1.0-0 \
-          libstdc++6 \
-          libx11-6 \
-          libx11-xcb1 \
-          libxcb1 \
-          libxcomposite1 \
-          libxcursor1 \
-          libxdamage1 \
-          libxext6 \
-          libxfixes3 \
-          libxi6 \
-          libxrandr2 \
-          libxrender1 \
-          libxss1 \
-          libxtst6 \
-          lsb-release \
-          xdg-utils \
-          libxshmfence1 \
-          libglvnd0 \
-          libgl1 \
-          libegl1 \
-          libdrm2 \
-          libxkbcommon0 \
-          libxcb-xinerama0 \
-          libxcb-cursor0
-        
-    - name: Install Python dependencies
-      run: |
+        sudo apt-get install -y google-chrome-stable python3-pip
         python -m pip install --upgrade pip
-        pip install pyppeteer
-        
-    - name: Install Node.js and Puppeteer
-      uses: actions/setup-node@v4
-      with:
-        node-version: '20'
-        
-    - name: Install Puppeteer
-      run: |
-        npm install puppeteer
-        npx puppeteer browsers install chrome
-        
-    - name: Verify Puppeteer installation
-      run: |
-        npx puppeteer --version
-        ls -la node_modules/puppeteer/
+        pip install selenium
         
     - name: Generate session ID if not provided
       if: github.event.inputs.session_id == ''
@@ -162,7 +97,7 @@ jobs:
         echo "Quality: $QUALITY"
         echo "Session ID: $SESSION_ID"
         
-        timeout 240 python runner/screenshot_generator.py || {
+        timeout 240 python runner/screenshot_generator_selenium.py || {
           echo "Screenshot capture timed out or failed"
           exit 1
         }
