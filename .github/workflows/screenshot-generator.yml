@@ -1,0 +1,175 @@
+name: Screenshot Generator
+
+on:
+  workflow_dispatch:
+    inputs:
+      url:
+        description: 'Website URL to capture'
+        required: true
+        default: 'https://example.com'
+      device:
+        description: 'Device type'
+        required: false
+        default: 'desktop'
+        type: choice
+        options:
+        - desktop
+        - tablet
+        - mobile
+      format:
+        description: 'Image format'
+        required: false
+        default: 'png'
+        type: choice
+        options:
+        - png
+        - jpeg
+      full_page:
+        description: 'Capture full page'
+        required: false
+        default: 'true'
+        type: boolean
+      quality:
+        description: 'Image quality'
+        required: false
+        default: 'high'
+        type: choice
+        options:
+        - low
+        - medium
+        - high
+      session_id:
+        description: 'Session ID for tracking'
+        required: false
+        default: ''
+
+env:
+  PYTHONUNBUFFERED: 1
+
+jobs:
+  screenshot-capture:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    
+    # Use a concurrency group to limit concurrent jobs
+    concurrency:
+      group: screenshot-${{ github.event.inputs.session_id || github.run_id }}
+      cancel-in-progress: false
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.9'
+        
+    - name: Install system dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y \
+          wget \
+          gnupg \
+          ca-certificates \
+          fonts-liberation \
+          libasound2 \
+          libatk-bridge2.0-0 \
+          libatk1.0-0 \
+          libc6 \
+          libcairo2 \
+          libcups2 \
+          libdbus-1-3 \
+          libexpat1 \
+          libfontconfig1 \
+          libgbm1 \
+          libgcc1 \
+          libgconf-2-4 \
+          libgdk-pixbuf2.0-0 \
+          libglib2.0-0 \
+          libgtk-3-0 \
+          libnspr4 \
+          libnss3 \
+          libpango-1.0-0 \
+          libpangocairo-1.0-0 \
+          libstdc++6 \
+          libx11-6 \
+          libx11-xcb1 \
+          libxcb1 \
+          libxcomposite1 \
+          libxcursor1 \
+          libxdamage1 \
+          libxext6 \
+          libxfixes3 \
+          libxi6 \
+          libxrandr2 \
+          libxrender1 \
+          libxss1 \
+          libxtst6 \
+          lsb-release \
+          xdg-utils
+        
+    - name: Install Python dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install pyppeteer
+        
+    - name: Install Puppeteer
+      run: |
+        npm i puppeteer
+        sudo node node_modules/puppeteer/install.js
+        
+    - name: Generate session ID if not provided
+      if: github.event.inputs.session_id == ''
+      run: |
+        echo "SESSION_ID=$(date +%s)-$(shuf -i 1000-9999 -n 1)" >> $GITHUB_ENV
+        
+    - name: Use provided session ID
+      if: github.event.inputs.session_id != ''
+      run: |
+        echo "SESSION_ID=${{ github.event.inputs.session_id }}" >> $GITHUB_ENV
+        
+    - name: Capture Screenshot
+      env:
+        URL: ${{ github.event.inputs.url }}
+        DEVICE: ${{ github.event.inputs.device }}
+        FORMAT: ${{ github.event.inputs.format }}
+        FULL_PAGE: ${{ github.event.inputs.full_page }}
+        QUALITY: ${{ github.event.inputs.quality }}
+        SESSION_ID: ${{ env.SESSION_ID }}
+      run: |
+        echo "Capturing screenshot for: $URL"
+        echo "Device: $DEVICE"
+        echo "Format: $FORMAT"
+        echo "Full page: $FULL_PAGE"
+        echo "Quality: $QUALITY"
+        echo "Session ID: $SESSION_ID"
+        
+        timeout 240 python runner/screenshot_generator.py || {
+          echo "Screenshot capture timed out or failed"
+          exit 1
+        }
+        
+    - name: Upload results
+      uses: actions/upload-artifact@v4
+      with:
+        name: screenshot-results-${{ env.SESSION_ID }}
+        path: results.json
+        retention-days: 1
+        
+    - name: Create summary
+      run: |
+        if [ -f results.json ]; then
+          STATUS=$(jq -r '.status // "unknown"' results.json)
+          CACHED=$(jq -r '.cached // false' results.json)
+          
+          echo "📸 **Screenshot Capture Results**" >> $GITHUB_STEP_SUMMARY
+          echo "- **URL**: $URL" >> $GITHUB_STEP_SUMMARY
+          echo "- **Device**: $DEVICE" >> $GITHUB_STEP_SUMMARY
+          echo "- **Format**: $FORMAT" >> $GITHUB_STEP_SUMMARY
+          echo "- **Status**: $([ "$STATUS" = "success" ] && echo "✅ Success" || echo "❌ Failed")" >> $GITHUB_STEP_SUMMARY
+          echo "- **Cached**: $([ "$CACHED" = "true" ] && echo "✅ Yes" || echo "❌ No")" >> $GITHUB_STEP_SUMMARY
+          echo "- **Session ID**: $SESSION_ID" >> $GITHUB_STEP_SUMMARY
+        else
+          echo "❌ **Screenshot Capture Failed**" >> $GITHUB_STEP_SUMMARY
+        fi
