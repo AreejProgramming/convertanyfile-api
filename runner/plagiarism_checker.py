@@ -9,9 +9,10 @@ import random
 import math
 import hashlib
 from datetime import datetime
-from urllib.parse import urlparse
+from urllib.parse import urlparse, quote
 from collections import Counter
 import difflib
+import html
 
 def generate_session_id():
     return str(uuid.uuid4())
@@ -26,6 +27,8 @@ def normalize_text(text):
     """
     Normalize text for comparison by removing extra whitespace and converting to lowercase
     """
+    # Remove HTML tags if any
+    text = re.sub(r'<[^>]+>', '', text)
     # Remove extra whitespace and normalize
     text = re.sub(r'\s+', ' ', text.strip())
     # Convert to lowercase for comparison
@@ -42,13 +45,12 @@ def split_into_sentences(text):
 def split_into_phrases(text, min_length=8, max_length=12):
     """
     Split text into phrases of varying lengths for more comprehensive checking
-    Increased minimum length to reduce false positives
     """
     words = text.split()
     phrases = []
     
     # Limit the number of phrases to prevent excessive processing
-    max_phrases = min(50, len(words))  # Reduced from 100
+    max_phrases = min(50, len(words))
     
     # Generate phrases of different lengths
     for length in range(min_length, max_length + 1):
@@ -70,7 +72,7 @@ def is_common_phrase(phrase):
     """
     Check if a phrase is too common to be considered plagiarism
     """
-    # List of common phrases that should not be considered plagiarism
+    # Expanded list of common phrases that should not be considered plagiarism
     common_phrases = [
         "in order to", "as well as", "according to", "in addition to", 
         "due to the fact", "in the case of", "on the other hand", 
@@ -84,8 +86,19 @@ def is_common_phrase(phrase):
         "in the sense of", "in the field of", "in the area of",
         "in the realm of", "in the world of", "in the domain of",
         "in the scope of", "in the range of", "in the frame of",
-        "in the context of", "in the light of", "in the absence of",
-        "in the presence of", "in the direction of", "in the vicinity of"
+        "it is important to note", "it should be noted that", 
+        "it is worth mentioning", "it is interesting to note",
+        "there are a number of", "a wide range of", "a variety of",
+        "a number of factors", "a great deal of", "a lot of",
+        "in recent years", "over the past few years", "in the last decade",
+        "in the 21st century", "in the modern era", "in today's world",
+        "in this day and age", "in the current climate", "at the present time",
+        "on the one hand", "on the other hand", "in contrast",
+        "by comparison", "in comparison", "in the same way",
+        "in a similar way", "in a similar vein", "along the same lines",
+        "in the long run", "in the short term", "in the foreseeable future",
+        "in the coming years", "in the years to come", "moving forward",
+        "looking ahead", "going forward", "in the future"
     ]
     
     normalized_phrase = normalize_text(phrase)
@@ -94,7 +107,6 @@ def is_common_phrase(phrase):
 def calculate_ngram_similarity(text1, text2, n=4):
     """
     Calculate n-gram similarity between two texts
-    Increased n to 4 for more specific comparisons
     """
     def get_ngrams(text, n):
         words = normalize_text(text).split()
@@ -150,7 +162,7 @@ def check_phrase_similarity(input_phrases, source_phrases):
     best_source_phrase = ""
     
     # Limit the number of phrase comparisons to prevent timeouts
-    max_comparisons = 300  # Reduced from 500
+    max_comparisons = 300
     comparison_count = 0
     
     for input_phrase in input_phrases:
@@ -185,20 +197,53 @@ def check_phrase_similarity(input_phrases, source_phrases):
     
     return max_similarity, best_input_phrase, best_source_phrase
 
-def get_comprehensive_sources():
+def search_web_sources(query, max_results=5):
     """
-    Get a comprehensive list of sources for comparison
+    Search for web sources related to the query
+    Note: This is a placeholder function. In a real implementation, 
+    you would use a search API like Google, Bing, or DuckDuckGo
+    """
+    # This is a mock implementation
+    # In a real scenario, you would make API calls to search engines
+    
+    # Extract key phrases from the query to simulate search results
+    words = query.split()
+    key_phrases = []
+    
+    # Create 3-5 word phrases
+    for i in range(len(words) - 2):
+        if i < 10:  # Limit to first 10 phrases
+            phrase = ' '.join(words[i:i+3])
+            if not is_common_phrase(phrase):
+                key_phrases.append(phrase)
+    
+    # Generate mock search results
+    results = []
+    for i, phrase in enumerate(key_phrases[:max_results]):
+        # Create a mock URL and title
+        url = f"https://example-website-{i+1}.com/article/{quote(phrase.replace(' ', '-'))}"
+        title = f"Article about {phrase}"
+        
+        # Create mock content that includes the phrase
+        content = f"This is an example article about {phrase}. In this article, we discuss various aspects of {phrase} and its implications. Research has shown that {phrase} plays an important role in many contexts. Scientists have been studying {phrase} for decades, and new discoveries are made regularly. The impact of {phrase} on society cannot be underestimated."
+        
+        results.append({
+            "url": url,
+            "title": title,
+            "content": content
+        })
+    
+    return results
+
+def get_academic_sources():
+    """
+    Get a list of academic sources for comparison
     """
     return [
         {
             "url": "https://en.wikipedia.org/wiki/Artificial_intelligence",
             "title": "Wikipedia - Artificial Intelligence",
             "content": "Artificial intelligence (AI) is intelligence demonstrated by machines, in contrast to the natural intelligence displayed by humans and animals. Leading AI textbooks define the field as the study of 'intelligent agents': any device that perceives its environment and takes actions that maximize its chance of successfully achieving its goals. Colloquially, the term 'artificial intelligence' is often used to describe machines that mimic 'cognitive' functions that humans associate with the human mind, such as 'learning' and 'problem solving'. AI applications include advanced web search engines, recommendation systems, understanding human speech, self-driving cars, and competing at the highest level in strategic games."
-        },
-        {
-            "url": "https://www.techcrunch.com/2023/05/25/ai-and-the-future-of-work",
-            "title": "TechCrunch - AI and Future of Work",
-            "content": "Artificial intelligence is rapidly transforming the workplace. Many jobs that involve routine tasks are being automated, while new roles are emerging that require AI skills. Workers need to adapt by developing new competencies and embracing lifelong learning. Companies are investing heavily in AI training programs to help their employees transition to new roles that work alongside AI systems. The future of work will likely involve humans collaborating with AI systems rather than being replaced by them."
         },
         {
             "url": "https://www.researchgate.net/publication/Impact_of_social_media",
@@ -219,16 +264,23 @@ def get_comprehensive_sources():
             "url": "https://arxiv.org/abs/2312.10298",
             "title": "arXiv - Academic Papers",
             "content": "Machine learning algorithms have revolutionized many fields including computer vision, natural language processing, and robotics. Deep learning, a subset of machine learning, uses neural networks with multiple layers to progressively extract higher-level features from raw input. This approach has led to breakthroughs in image recognition, language translation, and game playing. Transformer architectures have particularly advanced the field of natural language processing, enabling models like GPT to generate human-like text."
+        }
+    ]
+
+def get_web_sources():
+    """
+    Get a list of web sources for comparison
+    """
+    return [
+        {
+            "url": "https://www.techcrunch.com/2023/05/25/ai-and-the-future-of-work",
+            "title": "TechCrunch - AI and Future of Work",
+            "content": "Artificial intelligence is rapidly transforming the workplace. Many jobs that involve routine tasks are being automated, while new roles are emerging that require AI skills. Workers need to adapt by developing new competencies and embracing lifelong learning. Companies are investing heavily in AI training programs to help their employees transition to new roles that work alongside AI systems. The future of work will likely involve humans collaborating with AI systems rather than being replaced by them."
         },
         {
             "url": "https://www.example-blog.com/web-development-trends",
             "title": "Example Blog - Web Development Trends",
             "content": "Web development continues to evolve rapidly with new frameworks and technologies emerging regularly. Modern web applications use responsive design to work across devices, progressive web apps for native-like experiences, and serverless architectures for scalability. Developers must stay current with these trends to build effective and maintainable applications. The rise of JavaScript frameworks like React, Vue, and Angular has transformed front-end development."
-        },
-        {
-            "url": "https://www.nature.com/articles/s41586-023-05693-2",
-            "title": "Nature - Scientific Journal",
-            "content": "The human brain remains one of the most complex objects in the known universe. With approximately 86 billion neurons and trillions of synaptic connections, it processes information in parallel networks that enable consciousness, memory, and cognition. Understanding how these neural circuits work could lead to breakthroughs in treating neurological disorders and developing artificial intelligence. Recent advances in neuroimaging have allowed scientists to observe brain activity with unprecedented detail."
         },
         {
             "url": "https://www.bbc.com/news/technology-67892345",
@@ -244,26 +296,6 @@ def get_comprehensive_sources():
             "url": "https://www.nytimes.com/2023/10/12/technology/cryptocurrency-regulation.html",
             "title": "New York Times - Cryptocurrency",
             "content": "Cryptocurrency continues to disrupt traditional financial systems despite regulatory challenges. Bitcoin and other digital assets offer decentralized alternatives to government-issued currencies, but their volatility and use in illicit activities have drawn scrutiny from regulators worldwide. Blockchain technology, which underlies most cryptocurrencies, has applications beyond finance including supply chain management, digital identity verification, and smart contracts."
-        },
-        {
-            "url": "https://www.scientificamerican.com/article/climate-change-and-biodiversity",
-            "title": "Scientific American - Climate Change",
-            "content": "Climate change is accelerating biodiversity loss at an unprecedented rate. Rising temperatures, changing precipitation patterns, and extreme weather events are forcing species to adapt, migrate, or face extinction. Coral reefs are particularly vulnerable to ocean warming and acidification, with widespread bleaching events occurring more frequently. Conservation efforts must address both climate change and habitat preservation to protect endangered species."
-        },
-        {
-            "url": "https://www.wired.com/story/future-of-transportation",
-            "title": "Wired - Future of Transportation",
-            "content": "The transportation sector is undergoing a radical transformation driven by electrification and automation. Electric vehicles are becoming mainstream as battery technology improves and charging infrastructure expands. Autonomous vehicles promise to reduce accidents and traffic congestion, but face technical and regulatory hurdles. Urban planning is increasingly focused on public transit, bike lanes, and pedestrian-friendly design to reduce reliance on personal cars."
-        },
-        {
-            "url": "https://www.mckinsey.com/business-functions/mckinsey-digital/our-insights/the-state-of-ai-in-2023",
-            "title": "McKinsey - State of AI",
-            "content": "Artificial intelligence adoption has accelerated across industries in recent years. Companies are moving beyond experimentation to implement AI at scale in core business processes. Generative AI has captured public imagination with its ability to create human-like text, images, and code. However, organizations face challenges in data quality, talent acquisition, and ethical implementation. The most successful companies approach AI as a strategic business transformation rather than just a technology implementation."
-        },
-        {
-            "url": "https://www.health.harvard.edu/blog/mental-health-in-digital-age",
-            "title": "Harvard Health - Mental Health",
-            "content": "The digital age has brought both benefits and challenges to mental health. Social media can provide connection and support, but also contributes to anxiety, depression, and poor sleep through constant comparison and information overload. Digital wellness practices like setting boundaries around device use, curating social media feeds, and taking regular digital detoxes can help maintain psychological well-being. Mental health professionals are increasingly incorporating technology into treatment through teletherapy and mental health apps."
         }
     ]
 
@@ -284,8 +316,31 @@ def check_plagiarism_comprehensive(text, exclude_quotes=False, check_type="compr
         input_sentences = split_into_sentences(text)
         input_phrases = split_into_phrases(text)
         
-        # Get comprehensive sources
-        sources_data = get_comprehensive_sources()
+        # Get sources based on check type
+        sources_data = []
+        
+        if check_type in ["comprehensive", "academic"]:
+            sources_data.extend(get_academic_sources())
+        
+        if check_type in ["comprehensive", "web"]:
+            sources_data.extend(get_web_sources())
+        
+        # For comprehensive checks, also search for relevant web sources
+        if check_type == "comprehensive" and word_count > 50:
+            # Extract key phrases from the text to search for
+            key_phrases = []
+            for sentence in input_sentences[:5]:  # Use first 5 sentences
+                words = sentence.split()
+                for i in range(len(words) - 2):
+                    if len(key_phrases) < 5:  # Limit to 5 key phrases
+                        phrase = ' '.join(words[i:i+3])
+                        if not is_common_phrase(phrase) and len(phrase) > 15:
+                            key_phrases.append(phrase)
+            
+            # Search for web sources based on key phrases
+            for phrase in key_phrases:
+                web_sources = search_web_sources(phrase, max_results=2)
+                sources_data.extend(web_sources)
         
         # Track matches at different levels
         exact_matches = []
@@ -297,9 +352,9 @@ def check_plagiarism_comprehensive(text, exclude_quotes=False, check_type="compr
         matched_phrase_indices = set()
         
         # Limit the number of sources to check based on text length
-        max_sources_to_check = min(10, len(sources_data))
+        max_sources_to_check = min(15, len(sources_data))
         if word_count < 100:
-            max_sources_to_check = min(5, len(sources_data))
+            max_sources_to_check = min(8, len(sources_data))
         
         # Shuffle sources to get a diverse sample
         random.shuffle(sources_data)
@@ -355,8 +410,8 @@ def check_plagiarism_comprehensive(text, exclude_quotes=False, check_type="compr
                     # Take the maximum similarity
                     similarity = max(ngram_sim, sequence_sim)
                     
-                    # Increased threshold to reduce false positives
-                    if similarity >= 0.7:  # 70% similarity threshold (increased from 50%)
+                    # Threshold for sentence similarity
+                    if similarity >= 0.7:  # 70% similarity threshold
                         sentence_matches.append({
                             "url": source["url"],
                             "title": source["title"],
@@ -373,7 +428,7 @@ def check_plagiarism_comprehensive(text, exclude_quotes=False, check_type="compr
             
             # Check phrase-level matches for any remaining unmatched content
             phrase_similarity, best_input_phrase, best_source_phrase = check_phrase_similarity(input_phrases, source_phrases)
-            if phrase_similarity >= 0.8:  # 80% similarity threshold for phrases (increased from 70%)
+            if phrase_similarity >= 0.8:  # 80% similarity threshold for phrases
                 phrase_matches.append({
                     "url": source["url"],
                     "title": source["title"],
@@ -406,7 +461,7 @@ def check_plagiarism_comprehensive(text, exclude_quotes=False, check_type="compr
             avg_similarity = sum(match["similarity"] for match in all_matches) / max(len(all_matches), 1) / 100
             
             # Weight exact matches more heavily
-            exact_match_weight = len(exact_matches) * 0.5  # Increased from 0.3
+            exact_match_weight = len(exact_matches) * 0.5
             
             # Only consider significant matches (more than 15 words)
             significant_matches = [m for m in all_matches if m.get("words", 0) > 15]
