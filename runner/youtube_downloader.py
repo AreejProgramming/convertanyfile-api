@@ -8,6 +8,8 @@ import uuid
 import re
 import yt_dlp
 from datetime import datetime
+import tempfile
+import requests
 
 def generate_session_id():
     return str(uuid.uuid4())
@@ -21,16 +23,63 @@ def extract_video_id(url):
     match = re.search(regex, url)
     return match.group(1) if match else None
 
+def get_youtube_cookies():
+    """
+    Get YouTube cookies from a public source or generate basic ones
+    """
+    # Try to use a public cookie file or create a basic one
+    cookies_dir = '/tmp/yt_cookies'
+    os.makedirs(cookies_dir, exist_ok=True)
+    cookie_file = os.path.join(cookies_dir, 'youtube_cookies.txt')
+    
+    # Create a basic cookie file if it doesn't exist
+    if not os.path.exists(cookie_file):
+        with open(cookie_file, 'w') as f:
+            f.write("""# Netscape HTTP Cookie File
+# This is a generated file for yt-dlp
+youtube.com	TRUE	/	FALSE	2147483647	PREF	hl=en\&gl=US
+youtube.com	TRUE	/	FALSE	2147483647	VISITOR_INFO1_LIVE	1
+youtube.com	TRUE	/	FALSE	2147483647	YSC	1
+""")
+    
+    return cookie_file
+
 def get_video_info(url):
     """
     Get video information from YouTube
     """
     print(f"Fetching video info for: {url}")
     
+    # Get cookies
+    cookie_file = get_youtube_cookies()
+    
+    # Configure yt-dlp options with more robust settings
     ydl_opts = {
         'quiet': True,
         'no_warnings': True,
         'extract_flat': False,
+        'cookiefile': cookie_file,
+        'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+        'referer': 'https://www.youtube.com/',
+        'no_check_certificate': True,
+        'socket_timeout': 60,
+        'retries': 3,
+        'fragment_retries': 3,
+        'file_access_retries': 3,
+        'extractor_retries': 3,
+        'retry_sleep_functions': {
+            'http': lambda x: x * 2,
+            'fragment': lambda x: x * 2,
+            'file_access': lambda x: x * 2,
+            'extractor': lambda x: x * 2,
+        },
+        'http_headers': {
+            'Accept-Language': 'en-US,en;q=0.9',
+            'Accept-Encoding': 'gzip, deflate, br',
+            'DNT': '1',
+            'Connection': 'keep-alive',
+            'Upgrade-Insecure-Requests': '1',
+        }
     }
     
     try:
@@ -78,7 +127,58 @@ def get_video_info(url):
             }
     except Exception as e:
         print(f"Error getting video info: {str(e)}")
-        raise
+        # Try alternative method if first attempt fails
+        try:
+            print("Trying alternative method...")
+            ydl_opts.update({
+                'extractor_args': {
+                    'youtube': {
+                        'player_client': ['android', 'web'],
+                        'player_skip': ['configs', 'webpage'],
+                    }
+                }
+            })
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                info = ydl.extract_info(url, download=False)
+                
+                # Process the info as before
+                formats = info.get('formats', [])
+                qualities = []
+                for fmt in formats:
+                    if fmt.get('vcodec') != 'none' and fmt.get('height'):
+                        quality = f"{fmt['height']}p"
+                        if quality not in qualities:
+                            qualities.append(quality)
+                
+                qualities.sort(key=lambda x: int(x.replace('p', '')), reverse=True)
+                
+                available_formats = []
+                for fmt in formats:
+                    if fmt.get('ext') in ['mp4', 'webm', 'm4a']:
+                        available_formats.append({
+                            'format_id': fmt.get('format_id'),
+                            'ext': fmt.get('ext'),
+                            'quality': fmt.get('format_note') or f"{fmt.get('height', 'unknown')}p",
+                            'vcodec': fmt.get('vcodec'),
+                            'acodec': fmt.get('acodec'),
+                            'filesize': fmt.get('filesize')
+                        })
+                
+                return {
+                    'id': info.get('id'),
+                    'title': info.get('title'),
+                    'thumbnail': info.get('thumbnail'),
+                    'duration': info.get('duration'),
+                    'views': info.get('view_count'),
+                    'uploadDate': info.get('upload_date'),
+                    'channel': info.get('uploader'),
+                    'description': info.get('description'),
+                    'qualities': qualities,
+                    'availableFormats': available_formats
+                }
+        except Exception as e2:
+            print(f"Alternative method also failed: {str(e2)}")
+            raise Exception(f"Failed to get video info: {str(e)}. Alternative also failed: {str(e2)}")
 
 def download_video(url, quality, format_type, session_id):
     """
@@ -86,16 +186,41 @@ def download_video(url, quality, format_type, session_id):
     """
     print(f"Downloading video: {url}, Quality: {quality}, Format: {format_type}")
     
+    # Get cookies
+    cookie_file = get_youtube_cookies()
+    
     # Create output filename
     video_id = extract_video_id(url)
     output_template = f'video_{session_id}.%(ext)s'
     
-    # Configure download options
+    # Configure download options with robust settings
     ydl_opts = {
         'outtmpl': output_template,
         'quiet': True,
         'no_warnings': True,
         'progress_hooks': [progress_hook],
+        'cookiefile': cookie_file,
+        'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+        'referer': 'https://www.youtube.com/',
+        'no_check_certificate': True,
+        'socket_timeout': 60,
+        'retries': 5,
+        'fragment_retries': 5,
+        'file_access_retries': 5,
+        'extractor_retries': 5,
+        'retry_sleep_functions': {
+            'http': lambda x: x * 2,
+            'fragment': lambda x: x * 2,
+            'file_access': lambda x: x * 2,
+            'extractor': lambda x: x * 2,
+        },
+        'http_headers': {
+            'Accept-Language': 'en-US,en;q=0.9',
+            'Accept-Encoding': 'gzip, deflate, br',
+            'DNT': '1',
+            'Connection': 'keep-alive',
+            'Upgrade-Insecure-Requests': '1',
+        }
     }
     
     # Set format based on user selection
@@ -135,7 +260,34 @@ def download_video(url, quality, format_type, session_id):
             return downloaded_file
     except Exception as e:
         print(f"Error downloading video: {str(e)}")
-        raise
+        # Try alternative method if first attempt fails
+        try:
+            print("Trying alternative download method...")
+            ydl_opts.update({
+                'extractor_args': {
+                    'youtube': {
+                        'player_client': ['android', 'web'],
+                        'player_skip': ['configs', 'webpage'],
+                    }
+                }
+            })
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                ydl.download([url])
+                
+                # Find the downloaded file
+                downloaded_file = None
+                for file in os.listdir('.'):
+                    if file.startswith(f'video_{session_id}'):
+                        downloaded_file = file
+                        break
+                
+                if not downloaded_file:
+                    raise Exception("Downloaded file not found")
+                
+                return downloaded_file
+        except Exception as e2:
+            print(f"Alternative download method also failed: {str(e2)}")
+            raise Exception(f"Failed to download video: {str(e)}. Alternative also failed: {str(e2)}")
 
 def progress_hook(d):
     """
