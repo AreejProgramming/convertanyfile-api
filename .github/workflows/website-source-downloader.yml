@@ -1,0 +1,83 @@
+# File: .github/workflows/website-source-downloader.yml
+name: Run Website Source Code Downloader
+
+on:
+  workflow_dispatch:
+    inputs:
+      url:
+        description: 'Website URL to download'
+        required: true
+        type: string
+      session_id:
+        description: 'Unique session identifier'
+        required: true
+        type: string
+
+jobs:
+  download:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install requests beautifulsoup4 lxml cssutils js2py
+
+      - name: Run Website Source Code Downloader
+        id: run_downloader
+        env:
+          TARGET_URL: ${{ github.event.inputs.url }}
+          SESSION_ID: ${{ github.event.inputs.session_id }}
+        run: |
+          # Create a temporary file for output with session ID
+          OUTPUT_FILE="website_source_results_${SESSION_ID}.json"
+          
+          # Create a session marker file for easier tracking
+          echo "Session ID: $SESSION_ID" > session_marker_${SESSION_ID}.txt
+          echo "URL: $TARGET_URL" >> session_marker_${SESSION_ID}.txt
+          echo "Timestamp: $(date +%s)" >> session_marker_${SESSION_ID}.txt
+          
+          # Run the Python script and capture both stdout and stderr
+          python runner/website_source_downloader.py > script_output.txt 2>&1 || true
+          
+          # Display the output for debugging
+          echo "=== Script Output ==="
+          cat script_output.txt
+          
+          # Try to find the results in the script output
+          if grep -q "results=" script_output.txt; then
+            # Extract the JSON results
+            grep "results=" script_output.txt | sed 's/results=//' > "$OUTPUT_FILE"
+            echo "Results extracted to $OUTPUT_FILE"
+          else
+            # If no results found, create an error response
+            echo '{"status": "error", "message": "No results found in script output"}' > "$OUTPUT_FILE"
+          fi
+          
+          # Display the extracted results for debugging
+          echo "=== Extracted Results ==="
+          cat "$OUTPUT_FILE"
+          
+          # Save the file path for the next step
+          echo "output_file=$OUTPUT_FILE" >> $GITHUB_OUTPUT
+
+      - name: Upload Results as Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: website-source-results-${{ github.event.inputs.session_id }}
+          path: ${{ steps.run_downloader.outputs.output_file }}
+          retention-days: 1
+          
+      - name: Upload Session Marker
+        uses: actions/upload-artifact@v4
+        with:
+          name: session-marker-${{ github.event.inputs.session_id }}
+          path: session_marker_${{ github.event.inputs.session_id }}.txt
+          retention-days: 1
