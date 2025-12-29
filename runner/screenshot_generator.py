@@ -3,17 +3,15 @@ import json
 import time
 import sys
 import uuid
-import asyncio
-import logging
-from datetime import datetime, timedelta
-from urllib.parse import urlparse
-from concurrent.futures import ThreadPoolExecutor
 import base64
 import hashlib
-
-# Set up logging
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+from datetime import datetime, timedelta
+from urllib.parse import urlparse
+from selenium import webdriver
+from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.common.by import By
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
 
 def generate_session_id():
     """Generate a unique session ID"""
@@ -68,7 +66,6 @@ def check_cache(cache_key):
             # Check if cache is still valid (24 hours)
             cache_time = datetime.fromisoformat(cache_data.get('timestamp', '1970-01-01'))
             if datetime.now() - cache_time < timedelta(hours=24):
-                logger.info(f"Cache hit for {cache_key}")
                 return cache_data
             else:
                 # Cache expired, remove it
@@ -77,7 +74,7 @@ def check_cache(cache_key):
                 if os.path.exists(image_file):
                     os.remove(image_file)
         except Exception as e:
-            logger.error(f"Error checking cache: {str(e)}")
+            print(f"Error checking cache: {str(e)}")
     
     return None
 
@@ -99,39 +96,26 @@ def save_to_cache(cache_key, screenshot_data, image_data):
         with open(image_file, 'wb') as f:
             f.write(image_data)
         
-        logger.info(f"Saved to cache: {cache_key}")
         return True
     except Exception as e:
-        logger.error(f"Error saving to cache: {str(e)}")
+        print(f"Error saving to cache: {str(e)}")
         return False
 
-async def capture_screenshot_with_puppeteer(url, device, format, full_page, quality):
-    """Capture screenshot using Puppeteer"""
+def capture_screenshot_with_selenium(url, device, format, full_page, quality):
+    """Capture screenshot using Selenium and Chrome"""
     try:
-        from pyppeteer import launch
-        
         # Get viewport settings
         viewport = get_device_viewport(device)
         
-        # Launch browser with options
-        browser = await launch(
-            headless=True,
-            args=[
-                '--no-sandbox',
-                '--disable-setuid-sandbox',
-                '--disable-dev-shm-usage',
-                '--disable-accelerated-2d-canvas',
-                '--no-first-run',
-                '--no-zygote',
-                '--single-process',
-                '--disable-gpu'
-            ]
-        )
-        
-        page = await browser.newPage()
-        
-        # Set viewport
-        await page.setViewport(viewport)
+        # Configure Chrome options
+        chrome_options = Options()
+        chrome_options.add_argument('--headless')
+        chrome_options.add_argument('--no-sandbox')
+        chrome_options.add_argument('--disable-dev-shm-usage')
+        chrome_options.add_argument('--disable-gpu')
+        chrome_options.add_argument('--disable-web-security')
+        chrome_options.add_argument('--disable-features=VizDisplayCompositor')
+        chrome_options.add_argument(f'--window-size={viewport["width"]},{viewport["height"]}')
         
         # Set user agent
         user_agents = {
@@ -139,38 +123,51 @@ async def capture_screenshot_with_puppeteer(url, device, format, full_page, qual
             'tablet': 'Mozilla/5.0 (iPad; CPU OS 14_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/14.1.1 Mobile/15E148 Safari/604.1',
             'mobile': 'Mozilla/5.0 (iPhone; CPU iPhone OS 14_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/14.1.1 Mobile/15E148 Safari/604.1'
         }
-        await page.setUserAgent(user_agents.get(device, user_agents['desktop']))
+        chrome_options.add_argument(f'--user-agent={user_agents.get(device, user_agents["desktop"])}')
+        
+        # Initialize driver
+        driver = webdriver.Chrome(options=chrome_options)
+        
+        # Set viewport
+        driver.set_window_size(viewport['width'], viewport['height'])
         
         # Navigate to URL
-        await page.goto(url, {'waitUntil': 'networkidle2', 'timeout': 30000})
+        driver.get(url)
+        
+        # Wait for page to load
+        WebDriverWait(driver, 30).until(
+            EC.presence_of_element_located((By.TAG_NAME, "body"))
+        )
         
         # Get page title
-        title = await page.title()
+        title = driver.title
         
         # Get page dimensions
-        dimensions = await page.evaluate('''
-            () => {
-                return {
-                    width: document.body.scrollWidth,
-                    height: document.body.scrollHeight,
-                    viewportWidth: window.innerWidth,
-                    viewportHeight: window.innerHeight
-                }
+        dimensions = driver.execute_script('''
+            return {
+                width: document.body.scrollWidth,
+                height: document.body.scrollHeight,
+                viewportWidth: window.innerWidth,
+                viewportHeight: window.innerHeight
             }
         ''')
         
-        # Screenshot options
-        screenshot_options = {
-            'type': format,
-            'fullPage': full_page,
-            'quality': 90 if format == 'jpeg' else None
-        }
-        
         # Take screenshot
-        screenshot = await page.screenshot(screenshot_options)
+        if full_page:
+            # Full page screenshot
+            total_width = driver.execute_script("return document.body.offsetWidth")
+            total_height = driver.execute_script("return document.body.scrollHeight")
+            
+            driver.set_window_size(total_width, total_height)
+            time.sleep(1)  # Wait for resize
+            
+            screenshot = driver.get_screenshot_as_png()
+        else:
+            # Viewport screenshot
+            screenshot = driver.get_screenshot_as_png()
         
-        # Close browser
-        await browser.close()
+        # Close driver
+        driver.quit()
         
         return {
             'screenshot': screenshot,
@@ -183,15 +180,18 @@ async def capture_screenshot_with_puppeteer(url, device, format, full_page, qual
         }
         
     except Exception as e:
-        logger.error(f"Error capturing screenshot: {str(e)}")
+        print(f"Error capturing screenshot: {str(e)}")
+        if 'driver' in locals():
+            try:
+                driver.quit()
+            except:
+                pass
         raise e
 
 def process_screenshot_request(url, device, format, full_page, quality):
     """Process a screenshot request"""
     session_id = generate_session_id()
     domain = extract_domain(url)
-    
-    logger.info(f"Processing screenshot request for {url} with device {device}")
     
     # Validate URL
     if not validate_url(url):
@@ -206,7 +206,6 @@ def process_screenshot_request(url, device, format, full_page, quality):
     cached_result = check_cache(cache_key)
     
     if cached_result:
-        # Return cached result
         return {
             "status": "success",
             "session_id": session_id,
@@ -216,13 +215,7 @@ def process_screenshot_request(url, device, format, full_page, quality):
     
     # Capture new screenshot
     try:
-        # Run async function in event loop
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        result = loop.run_until_complete(
-            capture_screenshot_with_puppeteer(url, device, format, full_page, quality)
-        )
-        loop.close()
+        result = capture_screenshot_with_selenium(url, device, format, full_page, quality)
         
         # Prepare response data
         response_data = {
@@ -259,7 +252,7 @@ def process_screenshot_request(url, device, format, full_page, quality):
         }
         
     except Exception as e:
-        logger.error(f"Error processing screenshot request: {str(e)}")
+        print(f"Error processing screenshot request: {str(e)}")
         return {
             "status": "error",
             "message": str(e),
