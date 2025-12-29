@@ -1,4 +1,4 @@
-# File: .github/workflows/youtube-downloader.yml
+# Update the .github/workflows/youtube-downloader.yml file
 
 name: YouTube Downloader
 
@@ -32,7 +32,7 @@ on:
 jobs:
   process:
     runs-on: ubuntu-latest
-    timeout-minutes: 30  # Increased timeout for downloads
+    timeout-minutes: 30
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -71,6 +71,10 @@ jobs:
           echo "=== Script Output ==="
           cat script_output.txt
           
+          # List all files created for debugging
+          echo "=== Files Created ==="
+          ls -la *.json *.txt *.mp4 *.mp3 *.webm *.m4a 2>/dev/null || echo "No media files found"
+          
           # Try to find the results in the script output
           if grep -q "results=" script_output.txt; then
             # Extract the JSON results
@@ -90,7 +94,10 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: video-info-${{ github.event.inputs.session_id }}
-          path: results_${{ github.event.inputs.session_id }}.json
+          path: |
+            video_info_${{ github.event.inputs.session_id }}.json
+            results_${{ github.event.inputs.session_id }}.json
+            error_${{ github.event.inputs.session_id }}.json
           retention-days: 1
 
       - name: Upload Download Results (if download action)
@@ -100,7 +107,9 @@ jobs:
           name: video-download-${{ github.event.inputs.session_id }}
           path: |
             video_${{ github.event.inputs.session_id }}.*
+            video_download_${{ github.event.inputs.session_id }}.json
             results_${{ github.event.inputs.session_id }}.json
+            error_${{ github.event.inputs.session_id }}.json
           retention-days: 1
 
       - name: Upload Session Marker
