@@ -151,30 +151,10 @@ def progress_hook(d):
     elif d['status'] == 'finished':
         print("Download completed")
 
+# Update the main function in runner/youtube_downloader.py
+
 def main():
-    # Get session ID from environment variable
-    session_id = os.environ.get("SESSION_ID", generate_session_id())
-    
-    # Get action type from environment variable
-    action = os.environ.get("ACTION", "info")
-    
-    # Get video URL from environment variable
-    video_url = os.environ.get("VIDEO_URL")
-    
-    if not video_url:
-        print("ERROR: VIDEO_URL environment variable not set.")
-        print(f"results={json.dumps({'status': 'error', 'message': 'VIDEO_URL environment variable not set.'})}")
-        sys.exit(1)
-    
-    print(f"Session ID: {session_id}")
-    print(f"Action: {action}")
-    print(f"Video URL: {video_url}")
-    
-    results = {
-        "status": "error", 
-        "message": "Operation failed to start.",
-        "session_id": session_id
-    }
+    # ... existing code ...
     
     try:
         if action == "info":
@@ -187,16 +167,15 @@ def main():
                 "data": video_info
             }
             
-            # Save results to file
-            with open(f"video_info_{session_id}.json", "w") as f:
+            # Save results to file with consistent naming
+            output_file = f"video_info_{session_id}.json"
+            with open(output_file, "w") as f:
                 json.dump(results, f, indent=2)
             
-        elif action == "download":
-            # Download video
-            quality = os.environ.get("QUALITY", "720p")
-            format_type = os.environ.get("FORMAT", "mp4")
+            print(f"Results saved to {output_file}")
             
-            downloaded_file = download_video(video_url, quality, format_type, session_id)
+        elif action == "download":
+            # ... existing download code ...
             
             results = {
                 "status": "success",
@@ -205,6 +184,12 @@ def main():
                 "filename": downloaded_file
             }
             
+            # Save results to file with consistent naming
+            output_file = f"video_download_{session_id}.json"
+            with open(output_file, "w") as f:
+                json.dump(results, f, indent=2)
+            
+            print(f"Results saved to {output_file}")
             print(f"Download completed: {downloaded_file}")
         
     except Exception as e:
@@ -214,10 +199,16 @@ def main():
             "message": str(e),
             "session_id": session_id
         }
+        
+        # Save error results as well
+        output_file = f"error_{session_id}.json"
+        with open(output_file, "w") as f:
+            json.dump(results, f, indent=2)
+        
+        print(f"Error results saved to {output_file}")
     
     # Always output the results, even if there was an error
     print(f"results={json.dumps(results)}")
     return results
-
 if __name__ == "__main__":
     main()
