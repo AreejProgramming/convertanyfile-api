@@ -53,7 +53,20 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install yt-dlp
+          pip install yt-dlp requests
+
+      - name: Get YouTube Cookies
+        id: get_cookies
+        run: |
+          # Try to get cookies from secrets or use a rotating proxy service
+          if [ -n "${{ secrets.YOUTUBE_COOKIES }}" ]; then
+            echo "Using cookies from secrets"
+            echo "YOUTUBE_COOKIES<<EOF" >> $GITHUB_ENV
+            echo "${{ secrets.YOUTUBE_COOKIES }}" >> $GITHUB_ENV
+            echo "EOF" >> $GITHUB_ENV
+          else
+            echo "No cookies available, will try alternative methods"
+          fi
 
       - name: Process YouTube Video
         id: process_video
@@ -62,6 +75,7 @@ jobs:
           TARGET_QUALITY: ${{ github.event.inputs.quality }}
           SESSION_ID: ${{ github.event.inputs.session_id }}
           ACTION: ${{ github.event.inputs.action }}
+          YOUTUBE_COOKIES: ${{ env.YOUTUBE_COOKIES }}
         run: |
           # Create a session marker file for easier tracking
           echo "Session ID: $SESSION_ID" > session_marker_${SESSION_ID}.txt
@@ -69,6 +83,7 @@ jobs:
           echo "Quality: $TARGET_QUALITY" >> session_marker_${SESSION_ID}.txt
           echo "Action: $ACTION" >> session_marker_${SESSION_ID}.txt
           echo "Timestamp: $(date +%s)" >> session_marker_${SESSION_ID}.txt
+          echo "Has cookies: $([ -n "$YOUTUBE_COOKIES" ] && echo "Yes" || echo "No")" >> session_marker_${SESSION_ID}.txt
           
           # Run the Python script and capture both stdout and stderr
           python runner/youtube_audio_downloader.py > script_output.txt 2>&1 || true
