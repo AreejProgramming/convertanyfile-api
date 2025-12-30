@@ -1,5 +1,3 @@
-# File: .github/workflows/youtube-downloader.yml
-
 name: YouTube Downloader
 
 on:
@@ -49,6 +47,28 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y ffmpeg
 
+      - name: Create session marker immediately
+        env:
+          SESSION_ID: ${{ github.event.inputs.session_id }}
+          VIDEO_URL: ${{ github.event.inputs.video_url }}
+          ACTION: ${{ github.event.inputs.action }}
+        run: |
+          echo "Creating session marker for: $SESSION_ID"
+          mkdir -p markers
+          echo "Session ID: $SESSION_ID" > markers/session_marker_${SESSION_ID}.txt
+          echo "Video URL: $VIDEO_URL" >> markers/session_marker_${SESSION_ID}.txt
+          echo "Action: $ACTION" >> markers/session_marker_${SESSION_ID}.txt
+          echo "Timestamp: $(date +%s)" >> markers/session_marker_${SESSION_ID}.txt
+          echo "Run ID: ${{ github.run_id }}" >> markers/session_marker_${SESSION_ID}.txt
+          cat markers/session_marker_${SESSION_ID}.txt
+
+      - name: Upload Session Marker Early
+        uses: actions/upload-artifact@v4
+        with:
+          name: session-marker-${{ github.event.inputs.session_id }}
+          path: markers/session_marker_${{ github.event.inputs.session_id }}.txt
+          retention-days: 1
+
       - name: Process YouTube Video
         id: process_video
         env:
@@ -59,38 +79,27 @@ jobs:
           FORMAT: ${{ github.event.inputs.format }}
           YOUTUBE_API_KEY: ${{ secrets.YOUTUBE_API_KEY }}
         run: |
-          # Create a session marker file for easier tracking
-          echo "Session ID: $SESSION_ID" > session_marker_${SESSION_ID}.txt
-          echo "Video URL: $VIDEO_URL" >> session_marker_${SESSION_ID}.txt
-          echo "Action: $ACTION" >> session_marker_${SESSION_ID}.txt
-          echo "Timestamp: $(date +%s)" >> session_marker_${SESSION_ID}.txt
+          echo "Processing video with session: $SESSION_ID"
           
-          # Run the Python script and capture both stdout and stderr
-          python runner/youtube_downloader.py > script_output.txt 2>&1 || true
+          # Run the Python script and capture output
+          python runner/youtube_downloader.py 2>&1 | tee script_output.txt
           
-          # Display the output for debugging
-          echo "=== Script Output ==="
-          cat script_output.txt
+          echo "=== Script completed ==="
           
-          # List all files created for debugging
+          # List all files created
           echo "=== Files Created ==="
           ls -la *.json *.txt *.mp4 *.mp3 *.webm *.m4a 2>/dev/null || echo "No media files found"
           
-          # Try to find the results in the script output
+          # Extract results
           if grep -q "results=" script_output.txt; then
-            # Extract the JSON results
             grep "results=" script_output.txt | sed 's/results=//' > "results_${SESSION_ID}.json"
-            echo "Results extracted to results_${SESSION_ID}.json"
+            echo "Results extracted successfully"
+            cat "results_${SESSION_ID}.json"
           else
-            # If no results found, create an error response
-            echo '{"status": "error", "message": "No results found in script output"}' > "results_${SESSION_ID}.json"
+            echo '{"status": "error", "message": "No results found in script output", "session_id": "'${SESSION_ID}'"}' > "results_${SESSION_ID}.json"
           fi
-          
-          # Display the extracted results for debugging
-          echo "=== Extracted Results ==="
-          cat "results_${SESSION_ID}.json"
 
-      - name: Upload Info Results (if info action)
+      - name: Upload Info Results
         if: github.event.inputs.action == 'info'
         uses: actions/upload-artifact@v4
         with:
@@ -100,22 +109,17 @@ jobs:
             results_${{ github.event.inputs.session_id }}.json
             error_${{ github.event.inputs.session_id }}.json
           retention-days: 1
+          if-no-files-found: warn
 
-      - name: Upload Download Results (if download action)
+      - name: Upload Download Results
         if: github.event.inputs.action == 'download'
         uses: actions/upload-artifact@v4
         with:
           name: video-download-${{ github.event.inputs.session_id }}
           path: |
             video_${{ github.event.inputs.session_id }}.*
-            video_download_${ github.event.inputs.session_id }.json
-            results_${ github.event.inputs.session_id }.json
-            error_${ github.event.inputs.session_id }.json
+            video_download_${{ github.event.inputs.session_id }}.json
+            results_${{ github.event.inputs.session_id }}.json
+            error_${{ github.event.inputs.session_id }}.json
           retention-days: 1
-
-      - name: Upload Session Marker
-        uses: actions/upload-artifact@v4
-        with:
-          name: session-marker-${{ github.event.inputs.session_id }}
-          path: session_marker_${ github.event.inputs.session_id }.txt
-          retention-days: 1
+          if-no-files-found: warn
