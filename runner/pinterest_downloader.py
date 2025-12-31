@@ -5,7 +5,7 @@ import re
 import requests
 import sys
 from bs4 import BeautifulSoup
-from urllib.parse import urlparse
+from urllib.parse import urlparse, quote  # Added quote import here
 
 class PinterestVideoDownloader:
     def __init__(self):
@@ -92,7 +92,6 @@ class PinterestVideoDownloader:
                 "context": {}
             }
             
-            from urllib.parse import quote
             api_url = f"https://www.pinterest.com/resource/PinResource/get/?data={quote(json.dumps(query_data))}"
             
             response = self.session.get(api_url, timeout=10)
