@@ -1,0 +1,49 @@
+name: Pinterest Video Downloader
+
+on:
+  workflow_dispatch:
+    inputs:
+      url:
+        description: 'Pinterest URL to analyze'
+        required: true
+      session_id:
+        description: 'Unique session ID for tracking'
+        required: true
+
+jobs:
+  download-video:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+        
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.9'
+          
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install requests beautifulsoup4 lxml jszip
+          
+      - name: Create session marker
+        run: |
+          mkdir -p artifacts
+          echo "Session ${{ github.event.inputs.session_id }}" > artifacts/session-marker-${{ github.event.inputs.session_id }}.txt
+          
+      - name: Analyze Pinterest URL
+        run: |
+          python scripts/pinterest_downloader.py --url "${{ github.event.inputs.url }}" --output artifacts/pinterest_results_${{ github.event.inputs.session_id }}.json
+          
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v3
+        with:
+          name: session-marker-${{ github.event.inputs.session_id }}
+          path: artifacts/session-marker-${{ github.event.inputs.session_id }}.txt
+          
+      - name: Upload results
+        uses: actions/upload-artifact@v3
+        with:
+          name: pinterest-results-${{ github.event.inputs.session_id }}
+          path: artifacts/pinterest_results_${{ github.event.inputs.session_id }}.json
