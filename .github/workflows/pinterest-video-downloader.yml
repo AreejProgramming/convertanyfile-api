@@ -25,25 +25,107 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install requests==2.31.0 beautifulsoup4==4.12.2 lxml==4.9.3
-          
-      - name: List directory contents
-        run: |
-          pwd
-          ls -la
-          ls -la scripts/
+          pip install requests beautifulsoup4 lxml
           
       - name: Create artifacts directory
-        run: |
-          mkdir -p artifacts
-          
+        run: mkdir -p artifacts
+        
       - name: Create session marker
         run: |
           echo "Session ${{ github.event.inputs.session_id }}" > artifacts/session-marker-${{ github.event.inputs.session_id }}.txt
+          echo "Created session marker for ${{ github.event.inputs.session_id }}"
           
       - name: Analyze Pinterest URL
         run: |
-          python runner/pinterest_downloader.py --url "${{ github.event.inputs.url }}" --output artifacts/pinterest_results_${{ github.event.inputs.session_id }}.json
+          echo "Analyzing Pinterest URL: ${{ github.event.inputs.url }}"
+          echo "Session ID: ${{ github.event.inputs.session_id }}"
+          echo "Output file: artifacts/pinterest_results_${{ github.event.inputs.session_id }}.json"
+          
+          python runner/pinterest_downloader.py \
+            --url "${{ github.event.inputs.url }}" \
+            --output "artifacts/pinterest_results_${{ github.event.inputs.session_id }}.json"
+            
+      - name: Display results
+        if: success()
+        run: |
+          echo "Pinterest analysis completed successfully!"
+          echo "Results file:"
+          cat "artifacts/pinterest_results_${{ github.event.inputs.session_id }}.json" | head -50
+          
+      - name: Debug Pinterest URL
+        if: failure()
+        run: |
+          echo "=== DEBUGGING PINTEREST URL ==="
+          echo "URL: ${{ github.event.inputs.url }}"
+          echo "Session ID: ${{ github.event.inputs.session_id }}"
+          
+          python -c "
+          import requests
+          from bs4 import BeautifulSoup
+          import re
+          
+          url = '${{ github.event.inputs.url }}'
+          print(f'Analyzing URL: {url}')
+          
+          try:
+              # Test URL accessibility
+              response = requests.get(url, timeout=10, allow_redirects=True)
+              print(f'Status code: {response.status_code}')
+              print(f'Final URL: {response.url}')
+              print(f'Content-Type: {response.headers.get(\"Content-Type\", \"Unknown\")}')
+              print(f'Content-Length: {response.headers.get(\"Content-Length\", \"Unknown\")}')
+              
+              if response.status_code == 200:
+                  soup = BeautifulSoup(response.text, 'html.parser')
+                  title = soup.find('title')
+                  if title:
+                      print(f'Page title: {title.text}')
+                  else:
+                      print('No title found')
+                  
+                  # Check for video elements
+                  videos = soup.find_all('video')
+                  print(f'Found {len(videos)} video elements')
+                  
+                  # Check for script tags with data
+                  scripts = soup.find_all('script')
+                  pws_scripts = [s for s in scripts if s.string and ('__PWS_DATA__' in s.string or '__initialData' in s.string)]
+                  print(f'Found {len(pws_scripts)} scripts with Pinterest data')
+                  
+                  # Look for pin ID in URL
+                  pin_match = re.search(r'pin\/(\d+)', response.url)
+                  if pin_match:
+                      print(f'Pin ID: {pin_match.group(1)}')
+                  else:
+                      print('No pin ID found in URL')
+              else:
+                  print('Failed to fetch page')
+                  print(f'Response headers: {dict(response.headers)}')
+          except Exception as e:
+              print(f'Error: {e}')
+              import traceback
+              traceback.print_exc()
+          "
+          
+      - name: Check Python script syntax
+        if: failure()
+        run: |
+          echo "Checking Python script syntax..."
+          python -m py_compile runner/pinterest_downloader.py
+          echo "Syntax check passed"
+          
+      - name: Test Python script with dummy URL
+        if: failure()
+        run: |
+          echo "Testing Python script with dummy URL..."
+          python runner/pinterest_downloader.py \
+            --url "https://www.pinterest.com/pin/123456789/" \
+            --output "artifacts/test_output.json" || echo "Expected failure with dummy URL"
+          
+          if [ -f "artifacts/test_output.json" ]; then
+            echo "Test output file created:"
+            cat artifacts/test_output.json
+          fi
           
       - name: Upload session marker
         uses: actions/upload-artifact@v4
@@ -53,8 +135,25 @@ jobs:
           retention-days: 1
           
       - name: Upload results
+        if: success()
         uses: actions/upload-artifact@v4
         with:
           name: pinterest-results-${{ github.event.inputs.session_id }}
           path: artifacts/pinterest_results_${{ github.event.inputs.session_id }}.json
+          retention-days: 1
+          
+      - name: Upload debug artifacts
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: debug-logs-${{ github.event.inputs.session_id }}
+          path: artifacts/
+          retention-days: 1
+          
+      - name: Upload Python script
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: python-script-${{ github.event.inputs.session_id }}
+          path: runner/pinterest_downloader.py
           retention-days: 1
