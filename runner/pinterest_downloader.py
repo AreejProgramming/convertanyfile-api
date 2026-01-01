@@ -1,348 +1,227 @@
-#!/usr/bin/env python3
-import argparse
-import json
-import re
 import requests
+import json
+import os
+import re
 import sys
+import argparse
 from bs4 import BeautifulSoup
-from urllib.parse import urlparse, quote
+from urllib.parse import urlparse, parse_qs
 
-class PinterestVideoDownloader:
-    def __init__(self):
-        self.session = requests.Session()
-        self.session.headers.update({
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
-            'Accept-Language': 'en-US,en;q=0.9',
-            'Accept-Encoding': 'gzip, deflate, br',
-            'DNT': '1',
-            'Connection': 'keep-alive',
-            'Upgrade-Insecure-Requests': '1',
-            'Sec-Fetch-Dest': 'document',
-            'Sec-Fetch-Mode': 'navigate',
-            'Sec-Fetch-Site': 'none',
-            'Cache-Control': 'max-age=0'
-        })
+def extract_pin_id(url):
+    """Extract the pin ID from a Pinterest URL."""
+    # Handle different Pinterest URL formats
+    patterns = [
+        r'pinterest\.com/pin/(\d+)',
+        r'pin\.it/([a-zA-Z0-9]+)',
+        r'pinterest\.com/.*?/pin/(\d+)'
+    ]
     
-    def get_video_info(self, url):
-        print(f"Processing URL: {url}")
-        
-        # Validate Pinterest URL
-        if not self.is_valid_pinterest_url(url):
-            return {'status': 'error', 'message': 'Invalid Pinterest URL'}
-        
-        # Extract pin ID
-        pin_id = self.extract_pin_id(url)
-        if not pin_id:
-            return {'status': 'error', 'message': 'Could not extract pin ID from URL'}
-        
-        print(f"Extracted pin ID: {pin_id}")
-        
-        # Get the pin data
-        pin_data = self.fetch_pin_data(pin_id)
-        if not pin_data:
-            return {'status': 'error', 'message': 'Failed to fetch pin data'}
-        
-        # Extract video information
-        video_info = self.extract_video_info(pin_data)
-        if not video_info:
-            return {'status': 'error', 'message': 'No video found in this pin'}
-        
-        return {'status': 'success', 'data': video_info}
+    for pattern in patterns:
+        match = re.search(pattern, url)
+        if match:
+            return match.group(1)
     
-    def is_valid_pinterest_url(self, url):
-        return re.match(r'^(https?:\/\/)?(www\.)?(pinterest\.com|pin\.it)\/.+', url, re.IGNORECASE)
+    return None
+
+def get_video_info(pin_id):
+    """Get video information from Pinterest API."""
+    # Pinterest's internal API endpoint
+    api_url = f"https://www.pinterest.com/resource/PinResource/get/"
     
-    def extract_pin_id(self, url):
-        # Handle different URL formats
-        if re.search(r'pin\/(\d+)', url):
-            return re.search(r'pin\/(\d+)', url).group(1)
-        
-        # Handle short URLs (pin.it)
-        if 'pin.it' in url:
-            print("Following redirect for short URL...")
-            try:
-                response = self.session.head(url, allow_redirects=True, timeout=10)
-                if response.status_code == 200:
-                    redirect_url = response.url
-                    print(f"Redirected to: {redirect_url}")
-                    if re.search(r'pin\/(\d+)', redirect_url):
-                        return re.search(r'pin\/(\d+)', redirect_url).group(1)
-            except Exception as e:
-                print(f"Error following redirect: {e}")
-        
-        return None
+    # Prepare the data for the API request
+    data = {
+        "data": {
+            "options": {
+                "field_set_key": "unauth_react_pin_grid",
+                "id": pin_id
+            },
+            "context": {}
+        }
+    }
     
-    def fetch_pin_data(self, pin_id):
-        print("Attempting to scrape pin page...")
-        
-        # Try scraping the pin page
-        scraped_data = self.scrape_pin_page(pin_id)
-        if scraped_data:
-            return scraped_data
-        
-        print("Attempting GraphQL API...")
-        
-        # Try Pinterest's GraphQL API
-        graphql_data = self.fetch_with_graphql(pin_id)
-        if graphql_data:
-            return graphql_data
-        
-        return None
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
+        "Accept": "application/json",
+        "Content-Type": "application/json",
+        "Referer": "https://www.pinterest.com/",
+        "Origin": "https://www.pinterest.com"
+    }
     
-    def fetch_with_graphql(self, pin_id):
-        try:
-            # Pinterest's GraphQL query for pin data
-            query_data = {
-                "options": {
-                    "field_set_key": "unauth_react_pin_grid",
-                    "id": pin_id,
-                    "is_promotable": False
-                },
-                "context": {}
-            }
-            
-            api_url = f"https://www.pinterest.com/resource/PinResource/get/?data={quote(json.dumps(query_data))}"
-            
-            response = self.session.get(api_url, timeout=10)
-            if response.status_code == 200:
-                data = response.json()
-                if 'resource_response' in data and 'data' in data['resource_response']:
-                    return data['resource_response']['data']
-        except Exception as e:
-            print(f"GraphQL error: {e}")
-        
-        return None
+    try:
+        response = requests.post(api_url, json=data, headers=headers)
+        if response.status_code == 200:
+            return response.json()
+    except Exception as e:
+        print(f"Error fetching video info: {e}")
     
-    def scrape_pin_page(self, pin_id):
-        try:
-            url = f"https://www.pinterest.com/pin/{pin_id}/"
-            print(f"Fetching page: {url}")
-            
-            response = self.session.get(url, timeout=10)
-            
-            if response.status_code == 200:
-                # Try to extract video URL directly from HTML
-                print("Attempting to extract video URL directly from HTML...")
-                video_url = self.extract_video_url_from_html(response.text)
-                if video_url:
-                    # Create a minimal pin data structure with the video URL
-                    return {
-                        'id': pin_id,
-                        'title': 'Pinterest Video',
-                        'description': 'Video from Pinterest',
-                        'videos': {
-                            'video_list': {
-                                'V_720P': {
-                                    'url': video_url,
-                                    'size': 0
-                                }
-                            }
-                        },
-                        'images': {
-                            '236x': {
-                                'url': 'https://picsum.photos/seed/pinterest/400/300.jpg'
-                            }
-                        },
-                        'closeup_attribution': {
-                            'full_name': 'Pinterest User',
-                            'username': 'user',
-                            'image_medium_url': 'https://picsum.photos/seed/avatar/100/100.jpg'
-                        },
-                        'board': {
-                            'name': 'Pinterest Board'
-                        },
-                        'hashtags': [],
-                        'aggregated_pin_data': {
-                            'saves': 0,
-                            'repins': 0
-                        }
-                    }
-                
-                # Extract initial data from the page
-                print("Attempting to extract data from page scripts...")
-                soup = BeautifulSoup(response.text, 'html.parser')
-                
-                # Look for the script tag containing the data
-                scripts = soup.find_all('script')
-                for script in scripts:
-                    if script.string and 'window.__PWS_DATA__' in script.string:
-                        # Extract the JSON data
-                        json_text = script.string.split('window.__PWS_DATA__ = ')[1].split(';</script>')[0]
-                        data = json.loads(json_text)
-                        
-                        # Navigate through the data structure to find the pin
-                        if 'resourceResponses' in data:
-                            for resource in data['resourceResponses']:
-                                if resource.get('resource', {}).get('name') == 'PinResource' and 'response' in resource and 'data' in resource['response']:
-                                    return resource['response']['data']
-                        
-                        # Try alternative data structure
-                        if 'resources' in data:
-                            for resource_key, resource_value in data['resources'].items():
-                                if 'PinResource' in resource_key and 'data' in resource_value:
-                                    return resource_value['data']
-        except Exception as e:
-            print(f"Scraping error: {e}")
-        
-        return None
+    return None
+
+def extract_video_from_page(url):
+    """Extract video information by parsing the Pinterest page."""
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.5",
+        "Accept-Encoding": "gzip, deflate",
+        "Connection": "keep-alive",
+        "Upgrade-Insecure-Requests": "1",
+    }
     
-    def extract_video_url_from_html(self, html):
-        try:
-            # Look for video URLs in the HTML
-            soup = BeautifulSoup(html, 'html.parser')
+    try:
+        response = requests.get(url, headers=headers)
+        if response.status_code == 200:
+            soup = BeautifulSoup(response.text, 'html.parser')
             
-            # Method 1: Look for video tags with src attribute
-            video_tags = soup.find_all('video')
-            for video in video_tags:
-                if video.has_attr('src'):
-                    return video['src']
-            
-            # Method 2: Look for source tags within video elements
-            source_tags = soup.find_all('source')
-            for source in source_tags:
-                if source.has_attr('src') and source['src'].endswith('.mp4'):
-                    return source['src']
-            
-            # Method 3: Look for video URLs in script tags
+            # Look for embedded JSON data in script tags
             scripts = soup.find_all('script')
             for script in scripts:
-                if script.string:
-                    # Look for video URLs in the script content
-                    video_url_matches = re.findall(r'"url":"([^"]*\.mp4[^"]*)"', script.string)
-                    if video_url_matches:
-                        # Return the first match, decode escaped characters
-                        return video_url_matches[0].replace('\\/', '/')
+                if script.string and 'Preact' in script.string and 'video' in script.string:
+                    # Extract JSON data from the script
+                    try:
+                        # Find the JSON data in the script
+                        json_data = re.search(r'window\.__PWS_DATA__\s*=\s*({.+});', script.string)
+                        if json_data:
+                            data = json.loads(json_data.group(1))
+                            return extract_video_from_pws_data(data)
+                    except (json.JSONDecodeError, AttributeError) as e:
+                        print(f"Error parsing JSON: {e}")
+                        continue
             
-            # Method 4: Look for hls manifest URLs
-            hls_matches = re.findall(r'"url":"([^"]*\.m3u8[^"]*)"', html)
-            if hls_matches:
-                return hls_matches[0].replace('\\/', '/')
-            
-        except Exception as e:
-            print(f"Error extracting video URL from HTML: {e}")
-        
+            # Alternative method: Look for video tags
+            video_tags = soup.find_all('video')
+            if video_tags:
+                video_tag = video_tags[0]
+                sources = video_tag.find_all('source')
+                if sources:
+                    return {
+                        'status': 'success',
+                        'data': {
+                            'title': soup.title.string if soup.title else 'Pinterest Video',
+                            'thumbnail': video_tag.get('poster', ''),
+                            'downloadUrl': sources[0].get('src', ''),
+                            'duration': '0:30',  # Default duration
+                            'description': 'Video from Pinterest'
+                        }
+                    }
+    except Exception as e:
+        print(f"Error fetching page: {e}")
+    
+    return None
+
+def extract_video_from_pws_data(data):
+    """Extract video information from Pinterest's PWS data."""
+    try:
+        # Navigate through the nested data structure
+        if 'resourceResponses' in data:
+            for resource in data['resourceResponses']:
+                if resource.get('name') == 'PinResource':
+                    pin_data = resource.get('response', {}).get('data', {})
+                    
+                    if 'videos' in pin_data and 'video_list' in pin_data['videos']:
+                        video_list = pin_data['videos']['video_list']
+                        
+                        # Find the highest quality video
+                        highest_quality = None
+                        highest_height = 0
+                        
+                        for video_key, video_info in video_list.items():
+                            if 'url' in video_info and 'height' in video_info:
+                                if video_info['height'] > highest_height:
+                                    highest_height = video_info['height']
+                                    highest_quality = video_info
+                        
+                        if highest_quality:
+                            return {
+                                'status': 'success',
+                                'data': {
+                                    'title': pin_data.get('title', 'Pinterest Video'),
+                                    'description': pin_data.get('description', ''),
+                                    'thumbnail': pin_data.get('images', {}).get('orig', {}).get('url', ''),
+                                    'downloadUrl': highest_quality['url'],
+                                    'duration': format_duration(pin_data.get('videos', {}).get('duration', 0)),
+                                    'author': {
+                                        'name': pin_data.get('pinner', {}).get('full_name', ''),
+                                        'username': pin_data.get('pinner', {}).get('username', ''),
+                                        'avatar': pin_data.get('pinner', {}).get('image_medium_url', '')
+                                    },
+                                    'board': pin_data.get('board', {}).get('name', ''),
+                                    'hashtags': extract_hashtags(pin_data.get('description', ''))
+                                }
+                            }
+    except Exception as e:
+        print(f"Error extracting from PWS data: {e}")
+    
+    return None
+
+def extract_hashtags(description):
+    """Extract hashtags from description."""
+    if not description:
+        return []
+    
+    # Find hashtags in the description
+    hashtags = re.findall(r'#(\w+)', description)
+    return [f"#{tag}" for tag in hashtags[:5]]  # Limit to 5 hashtags
+
+def format_duration(seconds):
+    """Format duration in seconds to MM:SS format."""
+    if not seconds:
+        return "0:30"
+    
+    minutes = int(seconds) // 60
+    seconds = int(seconds) % 60
+    return f"{minutes}:{seconds:02d}"
+
+def download_pinterest_video(url, session_id, output_dir):
+    """Main function to download Pinterest video."""
+    print(f"Processing Pinterest URL: {url}")
+    
+    # Extract pin ID from URL
+    pin_id = extract_pin_id(url)
+    if not pin_id:
+        print("Could not extract pin ID from URL")
         return None
     
-    def extract_video_info(self, pin_data):
-        # Check if this pin has a video
-        if 'videos' not in pin_data:
-            return None
-        
-        # Get video data
-        video_list = pin_data['videos'].get('video_list', {})
-        video_data = video_list.get('V_720P') or video_list.get('V_480P') or video_list.get('V_360P')
-        
-        if not video_data:
-            return None
-        
-        # Extract author information
-        author_data = pin_data.get('closeup_attribution', {})
-        author = {
-            'name': author_data.get('full_name', 'Unknown'),
-            'username': '@' + author_data.get('username', 'unknown'),
-            'avatar': author_data.get('image_medium_url', 'https://picsum.photos/seed/avatar/100/100.jpg')
-        }
-        
-        # Extract hashtags
-        hashtags = []
-        if 'hashtags' in pin_data:
-            for tag in pin_data['hashtags']:
-                hashtags.append('#' + tag['hashtag'])
-        
-        # Build video information
-        video_info = {
-            'title': pin_data.get('title') or pin_data.get('description') or 'Pinterest Video',
-            'description': pin_data.get('description', 'No description available'),
-            'thumbnail': pin_data.get('images', {}).get('236x', {}).get('url', 'https://picsum.photos/seed/pinterest/400/300.jpg'),
-            'duration': self.format_duration(video_data.get('duration', 0)),
-            'views': self.format_number(pin_data.get('aggregated_pin_data', {}).get('saves', 0)),
-            'likes': self.format_number(pin_data.get('aggregated_pin_data', {}).get('repins', 0)),
-            'saves': self.format_number(pin_data.get('aggregated_pin_data', {}).get('saves', 0)),
-            'author': author,
-            'hashtags': hashtags,
-            'board': pin_data.get('board', {}).get('name', 'Unknown Board'),
-            'downloadUrl': video_data.get('url'),
-            'formats': self.get_available_formats(video_list)
-        }
-        
-        return video_info
+    print(f"Extracted pin ID: {pin_id}")
     
-    def get_available_formats(self, video_list):
-        formats = []
-        
-        # Define quality mapping
-        quality_map = {
-            'V_720P': {'quality': 'high', 'resolution': '720p'},
-            'V_480P': {'quality': 'medium', 'resolution': '480p'},
-            'V_360P': {'quality': 'low', 'resolution': '360p'}
-        }
-        
-        for key, video in video_list.items():
-            if key in quality_map:
-                quality = quality_map[key]['quality']
-                resolution = quality_map[key]['resolution']
-                size = self.format_file_size(video.get('size', 0))
-                
-                formats.append({
-                    'quality': quality,
-                    'resolution': resolution,
-                    'size': size,
-                    'format': 'mp4',
-                    'url': video.get('url')
-                })
-        
-        # Sort by quality (high to low)
-        quality_order = {'high': 3, 'medium': 2, 'low': 1}
-        formats.sort(key=lambda f: quality_order.get(f['quality'], 0), reverse=True)
-        
-        return formats
+    # Try to get video info from API first
+    video_info = get_video_info(pin_id)
     
-    def format_duration(self, seconds):
-        minutes = seconds // 60
-        seconds = seconds % 60
-        return f"{minutes}:{seconds:02d}"
+    # If API fails, try parsing the page
+    if not video_info:
+        print("API method failed, trying page parsing...")
+        video_info = extract_video_from_page(url)
     
-    def format_number(self, num):
-        if num >= 1000000:
-            return f"{num/1000000:.1f}M"
-        elif num >= 1000:
-            return f"{num/1000:.1f}K"
-        return str(num)
+    if not video_info:
+        print("Could not extract video information")
+        return None
     
-    def format_file_size(self, bytes):
-        if bytes >= 1048576:
-            return f"{bytes/1048576:.1f} MB"
-        elif bytes >= 1024:
-            return f"{bytes/1024:.1f} KB"
-        return f"{bytes} bytes"
+    # Create output directory if it doesn't exist
+    os.makedirs(output_dir, exist_ok=True)
+    
+    # Save the results to a JSON file
+    output_file = os.path.join(output_dir, f"pinterest_results_{session_id}.json")
+    with open(output_file, 'w') as f:
+        json.dump(video_info, f, indent=2)
+    
+    print(f"Results saved to {output_file}")
+    return video_info
 
 def main():
     parser = argparse.ArgumentParser(description='Download Pinterest videos')
-    parser.add_argument('--url', required=True, help='Pinterest URL to analyze')
-    parser.add_argument('--output', required=True, help='Output JSON file path')
+    parser.add_argument('--url', required=True, help='Pinterest URL to download')
+    parser.add_argument('--session_id', required=True, help='Session ID for tracking')
+    parser.add_argument('--output_dir', default='artifacts', help='Output directory')
     
     args = parser.parse_args()
     
-    print("Starting Pinterest video downloader...")
+    result = download_pinterest_video(args.url, args.session_id, args.output_dir)
     
-    downloader = PinterestVideoDownloader()
-    result = downloader.get_video_info(args.url)
-    
-    print(f"Final result status: {result.get('status')}")
-    if result.get('status') == 'error':
-        print(f"Error message: {result.get('message')}")
-    
-    # Ensure the output directory exists
-    import os
-    os.makedirs(os.path.dirname(args.output), exist_ok=True)
-    
-    with open(args.output, 'w') as f:
-        json.dump(result, f)
-    
-    print(f"Results saved to: {args.output}")
-    
-    return 0 if result['status'] == 'success' else 1
+    if result:
+        print("Successfully processed Pinterest video")
+        sys.exit(0)
+    else:
+        print("Failed to process Pinterest video")
+        sys.exit(1)
 
-if __name__ == '__main__':
-    sys.exit(main())
+if __name__ == "__main__":
+    main()
