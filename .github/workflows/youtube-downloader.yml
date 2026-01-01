@@ -1,125 +1,43 @@
-name: YouTube Downloader
+# .github/workflows/download.yml
 
+name: YouTube Video Downloader
+
+# Triggers the workflow manually from the "Actions" tab in GitHub.
 on:
   workflow_dispatch:
     inputs:
       video_url:
-        description: 'YouTube video URL'
+        description: 'The full YouTube video URL to download'
         required: true
-        type: string
-      session_id:
-        description: 'Unique session identifier'
-        required: true
-        type: string
-      action:
-        description: 'Action to perform (info or download)'
-        required: true
-        type: string
-        default: 'info'
-      quality:
-        description: 'Video quality (for download action)'
-        required: false
-        type: string
-        default: '720p'
-      format:
-        description: 'Output format (mp4 or mp3)'
-        required: false
-        type: string
-        default: 'mp4'
+        default: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ'
 
 jobs:
-  process:
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
+  download:
+    runs-on: ubuntu-latest # Use the latest Ubuntu runner
+
     steps:
+      # Step 1: Check out the repository code
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      # Step 2: Set up Python environment
       - name: Set up Python
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v5
         with:
-          python-version: '3.10'
+          python-version: '3.10' # Specify your Python version
 
-      - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install yt-dlp requests
-          sudo apt-get update
-          sudo apt-get install -y ffmpeg
+      # Step 3: Install dependencies
+      - name: Install yt-dlp
+        run: pip install yt-dlp
 
-      - name: Create session marker immediately
-        env:
-          SESSION_ID: ${{ github.event.inputs.session_id }}
-          VIDEO_URL: ${{ github.event.inputs.video_url }}
-          ACTION: ${{ github.event.inputs.action }}
-        run: |
-          echo "Creating session marker for: $SESSION_ID"
-          mkdir -p markers
-          echo "Session ID: $SESSION_ID" > markers/session_marker_${SESSION_ID}.txt
-          echo "Video URL: $VIDEO_URL" >> markers/session_marker_${SESSION_ID}.txt
-          echo "Action: $ACTION" >> markers/session_marker_${SESSION_ID}.txt
-          echo "Timestamp: $(date +%s)" >> markers/session_marker_${SESSION_ID}.txt
-          echo "Run ID: ${{ github.run_id }}" >> markers/session_marker_${SESSION_ID}.txt
-          cat markers/session_marker_${SESSION_ID}.txt
+      # Step 4: Run the Python download script
+      - name: Download YouTube Video
+        run: python download_video.py "${{ github.event.inputs.video_url }}"
 
-      - name: Upload Session Marker Early
+      # Step 5: Upload the downloaded video as an artifact
+      - name: Upload video artifact
         uses: actions/upload-artifact@v4
         with:
-          name: session-marker-${{ github.event.inputs.session_id }}
-          path: markers/session_marker_${{ github.event.inputs.session_id }}.txt
-          retention-days: 1
-
-      - name: Process YouTube Video
-        id: process_video
-        env:
-          VIDEO_URL: ${{ github.event.inputs.video_url }}
-          SESSION_ID: ${{ github.event.inputs.session_id }}
-          ACTION: ${{ github.event.inputs.action }}
-          QUALITY: ${{ github.event.inputs.quality }}
-          FORMAT: ${{ github.event.inputs.format }}
-          YOUTUBE_API_KEY: ${{ secrets.YOUTUBE_API_KEY }}
-        run: |
-          echo "Processing video with session: $SESSION_ID"
-          
-          # Run the Python script and capture output
-          python runner/youtube_downloader.py 2>&1 | tee script_output.txt
-          
-          echo "=== Script completed ==="
-          
-          # List all files created
-          echo "=== Files Created ==="
-          ls -la *.json *.txt *.mp4 *.mp3 *.webm *.m4a 2>/dev/null || echo "No media files found"
-          
-          # Extract results
-          if grep -q "results=" script_output.txt; then
-            grep "results=" script_output.txt | sed 's/results=//' > "results_${SESSION_ID}.json"
-            echo "Results extracted successfully"
-            cat "results_${SESSION_ID}.json"
-          else
-            echo '{"status": "error", "message": "No results found in script output", "session_id": "'${SESSION_ID}'"}' > "results_${SESSION_ID}.json"
-          fi
-
-      - name: Upload Info Results
-        if: github.event.inputs.action == 'info'
-        uses: actions/upload-artifact@v4
-        with:
-          name: video-info-${{ github.event.inputs.session_id }}
-          path: |
-            video_info_${{ github.event.inputs.session_id }}.json
-            results_${{ github.event.inputs.session_id }}.json
-            error_${{ github.event.inputs.session_id }}.json
-          retention-days: 1
-          if-no-files-found: warn
-
-      - name: Upload Download Results
-        if: github.event.inputs.action == 'download'
-        uses: actions/upload-artifact@v4
-        with:
-          name: video-download-${{ github.event.inputs.session_id }}
-          path: |
-            video_${{ github.event.inputs.session_id }}.*
-            video_download_${{ github.event.inputs.session_id }}.json
-            results_${{ github.event.inputs.session_id }}.json
-            error_${{ github.event.inputs.session_id }}.json
-          retention-days: 1
-          if-no-files-found: warn
+          name: downloaded-video
+          path: video_output/ # The directory where the video was saved
+          retention-days: 5 # Optional: Set how long to keep the artifact
