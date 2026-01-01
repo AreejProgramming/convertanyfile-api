@@ -4,45 +4,42 @@ on:
   workflow_dispatch:
     inputs:
       url:
-        description: 'Pinterest URL to download'
+        description: 'Pinterest URL to analyze'
         required: true
       session_id:
         description: 'Unique session ID for tracking'
         required: true
 
 jobs:
-  download:
+  analyze:
     runs-on: ubuntu-latest
-    
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-        
+
       - name: Set up Python
         uses: actions/setup-python@v4
         with:
           python-version: '3.10'
-          
-      - name: Install dependencies
-        run: |
-          pip install requests beautifulsoup4 lxml
-          
+
+      - name: Install yt-dlp
+        run: pip install yt-dlp
+
       - name: Create session marker
         run: |
           mkdir -p artifacts
           echo "Session marker for ${{ github.event.inputs.session_id }}" > artifacts/session-marker-${{ github.event.inputs.session_id }}.txt
-          
-      - name: Download Pinterest video
-        run: |
-          python runner/pinterest_downloader.py --url "${{ github.event.inputs.url }}" --session_id "${{ github.event.inputs.session_id }}" --output_dir artifacts
-          
+
+      - name: Analyze Pinterest URL with yt-dlp
+        run: python runner/pinterest_analyzer.py --url "${{ github.event.inputs.url }}" --session_id "${{ github.event.inputs.session_id }}"
+
       - name: Upload session marker
         uses: actions/upload-artifact@v3
         with:
           name: session-marker-${{ github.event.inputs.session_id }}
           path: artifacts/session-marker-${{ github.event.inputs.session_id }}.txt
           retention-days: 1
-          
+
       - name: Upload results
         uses: actions/upload-artifact@v3
         with:
