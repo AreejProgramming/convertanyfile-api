@@ -37,9 +37,9 @@ jobs:
           python-version: '3.10' # Specify your Python version
 
       # Step 3: Install dependencies
-      - name: Install yt-dlp and ffmpeg
+      - name: Install yt-dlp, ffmpeg, and requests
         run: |
-          pip install yt-dlp
+          pip install yt-dlp requests
           sudo apt-get update
           sudo apt-get install -y ffmpeg
 
