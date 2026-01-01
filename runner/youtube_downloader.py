@@ -1,21 +1,36 @@
-# download_video.py
+# download_video.py (in your GitHub repository)
 
 import yt_dlp
 import sys
 import os
 
-def download_video(url, output_path='.'):
+def download_video(url, quality='720p', format='mp4', output_path='.'):
     """
-    Downloads the best video from a given YouTube URL.
+    Downloads a video from a given YouTube URL with specified quality and format.
     """
-    # Set download options
-    ydl_opts = {
-        'outtmpl': os.path.join(output_path, '%(title)s.%(ext)s'), # Save with title as filename
-        'format': 'bestvideo+bestaudio/best', # Download best video and audio, or best combined
-        'no_warnings': False,
-    }
+    # Construct the format string for yt-dlp
+    if format == 'mp3':
+        ydl_opts = {
+            'outtmpl': os.path.join(output_path, '%(title)s.%(ext)s'),
+            'format': 'bestaudio/best',
+            'postprocessors': [{
+                'key': 'FFmpegExtractAudio',
+                'preferredcodec': 'mp3',
+                'preferredquality': '192',
+            }],
+            'no_warnings': False,
+        }
+    else: # mp4 or other video formats
+        # Note: yt-dlp handles quality selection with 'height' or a specific format code.
+        # For simplicity, we'll use a general 'best' filter.
+        # More advanced logic would be needed to map '720p' to a specific format code.
+        ydl_opts = {
+            'outtmpl': os.path.join(output_path, '%(title)s.%(ext)s'),
+            'format': f'best[height<={quality.replace("p", "")}]/best', # e.g., best[height<=720]/best
+            'no_warnings': False,
+        }
 
-    print(f"Attempting to download video from: {url}")
+    print(f"Attempting to download: {url} | Quality: {quality} | Format: {format}")
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info_dict = ydl.extract_info(url, download=True)
@@ -29,16 +44,20 @@ def download_video(url, output_path='.'):
         return None
 
 if __name__ == "__main__":
-    if len(sys.argv) < 2:
-        print("Error: Please provide a YouTube URL as an argument.")
+    # Expecting 3 arguments: url, quality, format
+    if len(sys.argv) < 4:
+        print("Error: Please provide a URL, quality, and format as arguments.")
         sys.exit(1)
     
     video_url = sys.argv[1]
+    selected_quality = sys.argv[2]
+    selected_format = sys.argv[3]
+    
     # Create a directory to store the video
     output_dir = "video_output"
     os.makedirs(output_dir, exist_ok=True)
     
-    downloaded_file = download_video(video_url, output_dir)
+    downloaded_file = download_video(video_url, selected_quality, selected_format, output_dir)
     
     if downloaded_file:
         print(f"Download complete. File saved to: {os.path.join(output_dir, downloaded_file)}")
