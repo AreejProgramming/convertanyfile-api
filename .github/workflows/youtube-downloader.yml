@@ -23,6 +23,7 @@ on:
 jobs:
   process:
     runs-on: ubuntu-latest # Use the latest Ubuntu runner
+    timeout-minutes: 15 # Set a timeout to prevent hanging
 
     steps:
       # Step 1: Check out the repository code
@@ -64,3 +65,4 @@ jobs:
             video_output/
             video_info.txt
           retention-days: 5 # Optional: Set how long to keep the artifact
+        if: always() # Upload artifacts even if the job fails
