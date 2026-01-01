@@ -31,7 +31,7 @@ jobs:
           echo "Session marker for ${{ github.event.inputs.session_id }}" > artifacts/session-marker-${{ github.event.inputs.session_id }}.txt
 
       - name: Analyze Pinterest URL with yt-dlp
-        run: python runner/pinterest_analyzer.py --url "${{ github.event.inputs.url }}" --session_id "${{ github.event.inputs.session_id }}"
+        run: python runner/pinterest_downloader.py --url "${{ github.event.inputs.url }}" --session_id "${{ github.event.inputs.session_id }}"
 
       - name: Upload session marker
         uses: actions/upload-artifact@v4 # <-- UPDATED TO v4
