@@ -6,13 +6,24 @@ name: YouTube Video Downloader
 on:
   workflow_dispatch:
     inputs:
-      video_url:
-        description: 'The full YouTube video URL to download'
+      action:
+        description: 'The action to perform: info or download'
         required: true
-        default: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ'
+        default: 'info'
+      video_url:
+        description: 'The full YouTube video URL to process'
+        required: true
+      quality:
+        description: 'The desired video quality (e.g., 720p)'
+        required: false
+        default: '720p'
+      format:
+        description: 'The desired format (mp4 or mp3)'
+        required: false
+        default: 'mp4'
 
 jobs:
-  download:
+  process:
     runs-on: ubuntu-latest # Use the latest Ubuntu runner
 
     steps:
@@ -30,14 +41,25 @@ jobs:
       - name: Install yt-dlp
         run: pip install yt-dlp
 
-      # Step 4: Run the Python download script
-      - name: Download YouTube Video
-        run: python runner/youtube_downloader.py "${{ github.event.inputs.video_url }}"
+      # Step 4: Run the Python script based on the action
+      - name: Process YouTube Video
+        run: |
+          if [ "${{ github.event.inputs.action }}" == "info" ]; then
+            echo "Fetching video info for ${{ github.event.inputs.video_url }}"
+            # In a real scenario, you would fetch info and maybe save it as an artifact
+            # For now, we'll just simulate it and create a placeholder file
+            echo "Video info for ${{ github.event.inputs.video_url }}" > video_info.txt
+          elif [ "${{ github.event.inputs.action }}" == "download" ]; then
+            echo "Downloading video in ${{ github.event.inputs.quality }} ${{ github.event.inputs.format }}"
+            python runner/youtube_downloader.py "${{ github.event.inputs.video_url }}" "${{ github.event.inputs.quality }}" "${{ github.event.inputs.format }}"
+          fi
 
-      # Step 5: Upload the downloaded video as an artifact
-      - name: Upload video artifact
+      # Step 5: Upload the result as an artifact
+      - name: Upload result artifact
         uses: actions/upload-artifact@v4
         with:
-          name: downloaded-video
-          path: video_output/ # The directory where the video was saved
+          name: video-result
+          path: |
+            video_output/
+            video_info.txt
           retention-days: 5 # Optional: Set how long to keep the artifact
