@@ -1,8 +1,18 @@
-# download_video.py (in your GitHub repository)
-
 import yt_dlp
 import sys
 import os
+import re
+
+def sanitize_filename(filename):
+    """Remove or replace characters that are invalid in filenames"""
+    # Replace invalid characters with underscores
+    filename = re.sub(r'[<>:"/\\|?*]', '_', filename)
+    # Remove leading/trailing spaces and dots
+    filename = filename.strip('. ')
+    # Limit length
+    if len(filename) > 200:
+        filename = filename[:200]
+    return filename or "untitled"
 
 def download_video(url, quality='720p', format='mp4', output_path='.'):
     """
@@ -19,24 +29,44 @@ def download_video(url, quality='720p', format='mp4', output_path='.'):
                 'preferredquality': '192',
             }],
             'no_warnings': False,
+            'quiet': False,
         }
     else: # mp4 or other video formats
-        # Note: yt-dlp handles quality selection with 'height' or a specific format code.
-        # For simplicity, we'll use a general 'best' filter.
-        # More advanced logic would be needed to map '720p' to a specific format code.
         ydl_opts = {
             'outtmpl': os.path.join(output_path, '%(title)s.%(ext)s'),
             'format': f'best[height<={quality.replace("p", "")}]/best', # e.g., best[height<=720]/best
             'no_warnings': False,
+            'quiet': False,
         }
 
     print(f"Attempting to download: {url} | Quality: {quality} | Format: {format}")
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info_dict = ydl.extract_info(url, download=True)
+            # First extract info without downloading to validate
+            info_dict = ydl.extract_info(url, download=False)
+            
+            # Check if info_dict is valid
+            if not info_dict:
+                raise Exception("Failed to extract video information")
+                
+            # Get video title with fallback
             video_title = info_dict.get('title', None)
-            video_ext = info_dict.get('ext', None)
-            filename = f"{video_title}.{video_ext}"
+            if not video_title:
+                # Try to use video ID as fallback
+                video_id = info_dict.get('id', None)
+                video_title = video_id if video_id else "video"
+            
+            # Sanitize the title for filename
+            safe_title = sanitize_filename(video_title)
+                
+            # Get video extension with fallback
+            video_ext = info_dict.get('ext', format if format != 'mp3' else 'mp3')
+            
+            # Now download with the validated info
+            info_dict = ydl.extract_info(url, download=True)
+            
+            # Create filename safely
+            filename = f"{safe_title}.{video_ext}"
             print(f"Successfully downloaded: {filename}")
             return filename
     except Exception as e:
