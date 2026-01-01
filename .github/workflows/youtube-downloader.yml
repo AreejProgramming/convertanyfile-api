@@ -23,7 +23,7 @@ on:
 jobs:
   process:
     runs-on: ubuntu-latest # Use the latest Ubuntu runner
-    timeout-minutes: 15 # Set a timeout to prevent hanging
+    timeout-minutes: 20 # Increased timeout to handle longer downloads
 
     steps:
       # Step 1: Check out the repository code
@@ -39,7 +39,7 @@ jobs:
       # Step 3: Install dependencies
       - name: Install yt-dlp, ffmpeg, and requests
         run: |
-          pip install yt-dlp requests
+          pip install yt-dlp requests urllib3
           sudo apt-get update
           sudo apt-get install -y ffmpeg
 
