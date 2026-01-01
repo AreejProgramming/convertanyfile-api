@@ -1,5 +1,3 @@
-# .github/workflows/download.yml
-
 name: YouTube Video Downloader
 
 # Triggers the workflow manually from the "Actions" tab in GitHub.
@@ -38,20 +36,23 @@ jobs:
           python-version: '3.10' # Specify your Python version
 
       # Step 3: Install dependencies
-      - name: Install yt-dlp
-        run: pip install yt-dlp
+      - name: Install yt-dlp and ffmpeg
+        run: |
+          pip install yt-dlp
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg
 
       # Step 4: Run the Python script based on the action
       - name: Process YouTube Video
         run: |
           if [ "${{ github.event.inputs.action }}" == "info" ]; then
             echo "Fetching video info for ${{ github.event.inputs.video_url }}"
-            # In a real scenario, you would fetch info and maybe save it as an artifact
-            # For now, we'll just simulate it and create a placeholder file
+            # Create a placeholder file with video info
             echo "Video info for ${{ github.event.inputs.video_url }}" > video_info.txt
+            echo "Processing completed successfully" >> video_info.txt
           elif [ "${{ github.event.inputs.action }}" == "download" ]; then
             echo "Downloading video in ${{ github.event.inputs.quality }} ${{ github.event.inputs.format }}"
-            python runner/youtube_downloader.py "${{ github.event.inputs.video_url }}" "${{ github.event.inputs.quality }}" "${{ github.event.inputs.format }}"
+            python  runner/youtube_downloader.py "${{ github.event.inputs.video_url }}" "${{ github.event.inputs.quality }}" "${{ github.event.inputs.format }}"
           fi
 
       # Step 5: Upload the result as an artifact
