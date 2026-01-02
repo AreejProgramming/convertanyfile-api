@@ -1,0 +1,48 @@
+name: Twitter Video Downloader
+
+on:
+  workflow_dispatch:
+    inputs:
+      url:
+        description: 'Twitter/X URL to analyze'
+        required: true
+      session_id:
+        description: 'Unique session ID for tracking'
+        required: true
+
+jobs:
+  analyze:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+
+      - name: Install yt-dlp
+        run: pip install yt-dlp
+
+      - name: Create session marker
+        run: |
+          mkdir -p artifacts
+          echo "Session marker for ${{ github.event.inputs.session_id }}" > artifacts/session-marker-${{ github.event.inputs.session_id }}.txt
+
+      - name: Analyze Twitter/X URL with yt-dlp
+        run: python runner/twitter_downloader.py --url "${{ github.event.inputs.url }}" --session_id "${{ github.event.inputs.session_id }}"
+
+      - name: Upload session marker
+        uses: actions/upload-artifact@v4
+        with:
+          name: session-marker-${{ github.event.inputs.session_id }}
+          path: artifacts/session-marker-${{ github.event.inputs.session_id }}.txt
+          retention-days: 1
+
+      - name: Upload results
+        uses: actions/upload-artifact@v4
+        with:
+          name: twitter-results-${{ github.event.inputs.session_id }}
+          path: artifacts/twitter_results_${{ github.event.inputs.session_id }}.json
+          retention-days: 1
