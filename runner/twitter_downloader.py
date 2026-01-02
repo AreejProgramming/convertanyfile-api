@@ -6,6 +6,12 @@ import subprocess
 import re
 import requests
 from datetime import datetime
+from urllib.parse import urlparse
+
+def extract_tweet_id(url):
+    """Extract tweet ID from Twitter/X URL"""
+    tweet_id_match = re.search(r'(?:twitter\.com|x\.com)/\w+/status/(\d+)', url)
+    return tweet_id_match.group(1) if tweet_id_match else None
 
 def get_video_info_with_ytdlp(url):
     """
@@ -54,6 +60,9 @@ def get_video_info_with_ytdlp(url):
             return video_data
         except subprocess.CalledProcessError as e:
             print(f"Attempt {i+1} failed with error: {e.stderr}")
+            if "No video could be found" in e.stderr:
+                # This means the tweet doesn't contain a video
+                return {"no_video": True}
             if i < len(commands) - 1:
                 continue
             else:
@@ -65,17 +74,71 @@ def get_video_info_with_ytdlp(url):
             else:
                 return None
 
+def get_tweet_info_with_web_scraping(url):
+    """
+    Fallback method using web scraping to get basic tweet information.
+    """
+    try:
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+        }
+        
+        response = requests.get(url, headers=headers)
+        
+        if response.status_code == 200:
+            html = response.text
+            
+            # Extract tweet text
+            tweet_text_match = re.search(r'<div[^>]*data-testid="tweetText"[^>]*>(.*?)</div>', html, re.DOTALL)
+            tweet_text = tweet_text_match.group(1).strip() if tweet_text_match else ""
+            
+            # Clean up HTML tags
+            tweet_text = re.sub(r'<[^>]+>', '', tweet_text)
+            
+            # Extract author name
+            author_name_match = re.search(r'<span[^>]*data-testid="User-Name"[^>]*>(.*?)</span>', html, re.DOTALL)
+            author_name = author_name_match.group(1).strip() if author_name_match else ""
+            author_name = re.sub(r'<[^>]+>', '', author_name)
+            
+            # Extract author handle
+            author_handle_match = re.search(r'<span[^>]*data-testid="UserScreenName"[^>]*>(.*?)</span>', html, re.DOTALL)
+            author_handle = author_handle_match.group(1).strip() if author_handle_match else ""
+            author_handle = re.sub(r'<[^>]+>', '', author_handle)
+            
+            # Extract images
+            images = []
+            image_matches = re.findall(r'<img[^>]*src="([^"]*)"[^>]*alt="([^"]*)"[^>]*>', html)
+            for src, alt in image_matches:
+                if "profile_images" not in src and src.startswith("https://"):
+                    images.append({"url": src, "alt": alt})
+            
+            # Check if there's a video player
+            has_video = bool(re.search(r'<div[^>]*data-testid="videoPlayer"[^>]*>', html))
+            
+            return {
+                "tweet_text": tweet_text,
+                "author_name": author_name,
+                "author_handle": author_handle,
+                "images": images,
+                "has_video": has_video
+            }
+        else:
+            print(f"Web scraping request failed with status: {response.status_code}")
+            return None
+            
+    except Exception as e:
+        print(f"Web scraping method failed with error: {e}")
+        return None
+
 def get_video_info_with_twitter_api(url):
     """
     Fallback method using Twitter's public API endpoints.
     """
     try:
         # Extract tweet ID from URL
-        tweet_id_match = re.search(r'(?:twitter\.com|x\.com)/\w+/status/(\d+)', url)
-        if not tweet_id_match:
+        tweet_id = extract_tweet_id(url)
+        if not tweet_id:
             return None
-            
-        tweet_id = tweet_id_match.group(1)
         
         # Use Twitter's GraphQL API (simplified approach)
         headers = {
@@ -84,7 +147,7 @@ def get_video_info_with_twitter_api(url):
         }
         
         # Try to get tweet details
-        api_url = f"https://api.twitter.com/2/tweets/{tweet_id}?expansions=attachments.media_keys,author_id&media.fields=url,preview_image_url,width,height&user.fields=name,username,profile_image_url"
+        api_url = f"https://api.twitter.com/2/tweets/{tweet_id}?expansions=attachments.media_keys,author_id&media.fields=url,preview_image_url,width,height,type,duration_ms&user.fields=name,username,profile_image_url"
         
         response = requests.get(api_url, headers=headers)
         
@@ -194,6 +257,13 @@ def process_ytdlp_data(data, original_url):
     if not data:
         return None
 
+    # Check if yt-dlp reported no video
+    if data.get("no_video"):
+        return {
+            'status': 'no_video',
+            'message': 'This tweet does not contain a video or GIF.'
+        }
+
     print("--- DEBUG: yt-dlp raw data keys ---")
     print(list(data.keys()))
     print("--- DEBUG: Checking for direct 'url' key ---")
@@ -287,6 +357,36 @@ def process_ytdlp_data(data, original_url):
         'url': original_url
     }
 
+def process_web_scraping_data(data, original_url):
+    """
+    Process web scraping data into the format expected by the React component.
+    """
+    if not data:
+        return None
+    
+    # Get the first image as thumbnail if available
+    thumbnail = data.get('images', [{}])[0].get('url') if data.get('images') else None
+    
+    return {
+        'title': data.get('tweet_text', '').split('\n')[0][:100],  # First line of tweet, truncated
+        'description': data.get('tweet_text', ''),
+        'thumbnail': thumbnail,
+        'duration': '0:00',
+        'author': {
+            'name': data.get('author_name', 'Twitter User'),
+            'username': data.get('author_handle', '@user'),
+            'avatar': 'https://picsum.photos/seed/avatar/100/100.jpg'
+        },
+        'formats': [],  # No download formats available from web scraping
+        'hashtags': [],
+        'isGif': False,
+        'views': '0',
+        'uploadDate': '',
+        'url': original_url,
+        'has_video': data.get('has_video', False),
+        'images': data.get('images', [])
+    }
+
 def main():
     parser = argparse.ArgumentParser(description='Analyze Twitter/X video using yt-dlp')
     parser.add_argument('--url', required=True, help='Twitter/X URL to analyze')
@@ -299,20 +399,42 @@ def main():
     # Try yt-dlp first with multiple approaches
     raw_data = get_video_info_with_ytdlp(args.url)
     
-    # If yt-dlp fails, try Twitter API
-    if not raw_data:
-        print("yt-dlp failed, trying Twitter API fallback")
-        raw_data = get_video_info_with_twitter_api(args.url)
-    
-    if not raw_data:
+    # Check if yt-dlp reported no video
+    if raw_data and raw_data.get("no_video"):
         final_result = {
-            'status': 'error',
-            'message': 'Could not extract video information. The URL may be invalid, private, or the content may not be a video. Twitter/X has recently changed their API, which may be causing this issue.'
+            'status': 'no_video',
+            'message': 'This tweet does not contain a video or GIF.',
+            'data': process_web_scraping_data(get_tweet_info_with_web_scraping(args.url), args.url)
         }
+    # If yt-dlp fails, try Twitter API
+    elif not raw_data:
+        print("yt-dlp failed, trying Twitter API fallback")
+        api_data = get_video_info_with_twitter_api(args.url)
+        
+        if api_data:
+            final_result = {
+                'status': 'success',
+                'data': api_data
+            }
+        else:
+            print("Twitter API failed, trying web scraping")
+            scrape_data = get_tweet_info_with_web_scraping(args.url)
+            
+            if scrape_data:
+                final_result = {
+                    'status': 'no_video',
+                    'message': 'Could not extract video information. This tweet may not contain a video or GIF, or the content may be private.',
+                    'data': process_web_scraping_data(scrape_data, args.url)
+                }
+            else:
+                final_result = {
+                    'status': 'error',
+                    'message': 'Could not extract video information. The URL may be invalid, private, or the content may not be a video. Twitter/X has recently changed their API, which may be causing this issue.'
+                }
     else:
         final_result = {
             'status': 'success',
-            'data': raw_data
+            'data': process_ytdlp_data(raw_data, args.url)
         }
 
     output_dir = 'artifacts'
@@ -325,6 +447,8 @@ def main():
     print(f"Results saved to {output_file}")
     if final_result.get('status') == 'success':
         print("Successfully processed content.")
+    elif final_result.get('status') == 'no_video':
+        print("Tweet processed, but no video/GIF found.")
     else:
         print("Processing failed.")
         sys.exit(1)
