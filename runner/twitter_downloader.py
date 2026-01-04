@@ -1,123 +1,209 @@
 import json
 import os
 import sys
-import argparse
+import asyncio
+import aiohttp
+import aiofiles
+from fastapi import FastAPI, HTTPException, BackgroundTasks
+from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
+from typing import Optional, Dict, Any
+import uvicorn
+import redis
 import subprocess
-import re
-import requests
-from datetime import datetime
-from urllib.parse import urlparse
-from bs4 import BeautifulSoup
-import concurrent.futures
-import threading
+import time
+from datetime import datetime, timedelta
 
-# Thread-safe storage for session data
-session_data = {}
-session_lock = threading.Lock()
+# Configuration
+REDIS_URL = os.environ.get("REDIS_URL", "redis://localhost:6379")
+REDIS_TTL = 3600  # 1 hour
+MAX_CONCURRENT_REQUESTS = 50
+REQUEST_TIMEOUT = 60  # seconds
 
-def extract_tweet_id(url):
+# Initialize FastAPI app
+app = FastAPI(title="Twitter Video Downloader API", version="1.0.0")
+
+# Add CORS middleware
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# Initialize Redis client
+try:
+    redis_client = redis.from_url(REDIS_URL)
+    redis_client.ping()
+    redis_available = True
+except:
+    redis_available = False
+    print("Redis not available, using in-memory cache")
+
+# In-memory cache fallback
+memory_cache = {}
+
+# Request model
+class TwitterRequest(BaseModel):
+    url: str
+    session_id: str
+
+# Response model
+class TwitterResponse(BaseModel):
+    status: str
+    message: Optional[str] = None
+    data: Optional[Dict[str, Any]] = None
+
+# Helper functions
+def generate_cache_key(url: str) -> str:
+    """Generate a cache key for the given URL"""
+    import hashlib
+    return f"twitter_video:{hashlib.md5(url.encode()).hexdigest()}"
+
+def get_from_cache(cache_key: str) -> Optional[Dict[str, Any]]:
+    """Get data from cache (Redis or in-memory)"""
+    if redis_available:
+        try:
+            data = redis_client.get(cache_key)
+            if data:
+                return json.loads(data)
+        except:
+            pass
+    
+    # Fallback to memory cache
+    if cache_key in memory_cache:
+        cache_entry = memory_cache[cache_key]
+        if time.time() - cache_entry["timestamp"] < REDIS_TTL:
+            return cache_entry["data"]
+        else:
+            del memory_cache[cache_key]
+    
+    return None
+
+def set_in_cache(cache_key: str, data: Dict[str, Any]) -> None:
+    """Set data in cache (Redis or in-memory)"""
+    if redis_available:
+        try:
+            redis_client.setex(cache_key, REDIS_TTL, json.dumps(data))
+            return
+        except:
+            pass
+    
+    # Fallback to memory cache
+    memory_cache[cache_key] = {
+        "data": data,
+        "timestamp": time.time()
+    }
+
+def extract_tweet_id(url: str) -> Optional[str]:
     """Extract tweet ID from Twitter/X URL"""
+    import re
     tweet_id_match = re.search(r'(?:twitter\.com|x\.com)/\w+/status/(\d+)', url)
     return tweet_id_match.group(1) if tweet_id_match else None
 
-def get_video_info_with_ytdlp(url, session_id):
+async def get_video_info_with_ytdlp(url: str) -> Optional[Dict[str, Any]]:
     """
-    Uses yt-dlp with optimized settings to extract video information from a Twitter/X URL.
+    Uses yt-dlp with updated authentication methods to extract video information from a Twitter/X URL.
     """
-    # Create a unique output directory for this session
-    output_dir = f'temp_{session_id}'
-    os.makedirs(output_dir, exist_ok=True)
-    
-    try:
-        # Optimized command with timeout and specific format selection
-        command = [
+    # Try multiple approaches to get the video
+    commands = [
+        # First attempt: with cookies if available
+        [
             'yt-dlp',
             '--no-warnings',
             '--simulate',
             '--print-json',
-            '--format', 'best[height<=720]',  # Limit to 720p for faster processing
+            '--add-header', 'Authorization:Bearer AAAAAAAAAAAAAAAAAAAAANRILgAAAAAAnNwIzUejRCOuH5E6I8xnZz4puTs%3D1Zv7ttfk8LF81IUq16cHjhLTvJu4FA33AGWWjCpTnA',
+            url
+        ],
+        # Second attempt: with user agent
+        [
+            'yt-dlp',
+            '--no-warnings',
+            '--simulate',
+            '--print-json',
+            '--add-header', 'User-Agent:Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+            url
+        ],
+        # Third attempt: with additional headers
+        [
+            'yt-dlp',
+            '--no-warnings',
+            '--simulate',
+            '--print-json',
             '--add-header', 'Authorization:Bearer AAAAAAAAAAAAAAAAAAAAANRILgAAAAAAnNwIzUejRCOuH5E6I8xnZz4puTs%3D1Zv7ttfk8LF81IUq16cHjhLTvJu4FA33AGWWjCpTnA',
             '--add-header', 'User-Agent:Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
-            '--socket-timeout', '30',  # Set timeout to 30 seconds
+            '--add-header', 'Accept-Language:en-US,en;q=0.9',
+            '--add-header', 'Referer:https://twitter.com/',
+            url
+        ],
+        # Fourth attempt: basic approach
+        [
+            'yt-dlp',
+            '--no-warnings',
+            '--simulate',
+            '--print-json',
             url
         ]
-        
-        print(f"Processing {url} with session {session_id}")
-        
-        # Run with timeout to prevent hanging
-        result = subprocess.run(
-            command,
-            capture_output=True,
-            text=True,
-            check=True,
-            timeout=60  # 60 second timeout
-        )
-        
-        video_data = json.loads(result.stdout)
-        
-        # Store session data
-        with session_lock:
-            session_data[session_id] = {
-                'status': 'success',
-                'data': video_data,
-                'timestamp': datetime.now().isoformat()
-            }
-        
-        return video_data
-        
-    except subprocess.TimeoutExpired:
-        print(f"Timeout processing {url} with session {session_id}")
-        with session_lock:
-            session_data[session_id] = {
-                'status': 'error',
-                'message': 'Processing timed out. The video might be too large or the server is slow.',
-                'timestamp': datetime.now().isoformat()
-            }
-        return None
-    except subprocess.CalledProcessError as e:
-        print(f"Error processing {url} with session {session_id}: {e.stderr}")
-        if "No video could be found" in e.stderr:
-            # This means the tweet doesn't contain a video
-            with session_lock:
-                session_data[session_id] = {
-                    'status': 'no_video',
-                    'message': 'This tweet does not contain a video or GIF.',
-                    'timestamp': datetime.now().isoformat()
-                }
-            return {"no_video": True}
-        else:
-            with session_lock:
-                session_data[session_id] = {
-                    'status': 'error',
-                    'message': f'Failed to process: {e.stderr}',
-                    'timestamp': datetime.now().isoformat()
-                }
-            return None
-    except json.JSONDecodeError:
-        print(f"JSON decode error for {url} with session {session_id}")
-        with session_lock:
-            session_data[session_id] = {
-                'status': 'error',
-                'message': 'Failed to parse video data.',
-                'timestamp': datetime.now().isoformat()
-            }
-        return None
-    except Exception as e:
-        print(f"Unexpected error for {url} with session {session_id}: {str(e)}")
-        with session_lock:
-            session_data[session_id] = {
-                'status': 'error',
-                'message': f'Unexpected error: {str(e)}',
-                'timestamp': datetime.now().isoformat()
-            }
-        return None
-    finally:
-        # Clean up temp directory
+    ]
+    
+    for i, command in enumerate(commands):
         try:
-            import shutil
-            shutil.rmtree(output_dir, ignore_errors=True)
-        except:
-            pass
+            print(f"Attempt {i+1} with yt-dlp")
+            # Run the command asynchronously
+            process = await asyncio.create_subprocess_exec(
+                *command,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE
+            )
+            
+            stdout, stderr = await asyncio.wait_for(
+                process.communicate(), 
+                timeout=REQUEST_TIMEOUT
+            )
+            
+            if process.returncode == 0:
+                video_data = json.loads(stdout.decode())
+                return video_data
+            else:
+                error_msg = stderr.decode()
+                print(f"Attempt {i+1} failed with error: {error_msg}")
+                if "No video could be found" in error_msg:
+                    # This means the tweet doesn't contain a video
+                    return {"no_video": True}
+                if i < len(commands) - 1:
+                    continue
+                else:
+                    return None
+        except asyncio.TimeoutError:
+            print(f"Attempt {i+1} timed out")
+            if i < len(commands) - 1:
+                continue
+            else:
+                return None
+        except json.JSONDecodeError:
+            print(f"Attempt {i+1} failed to parse JSON output")
+            if i < len(commands) - 1:
+                continue
+            else:
+                return None
+        except Exception as e:
+            print(f"Attempt {i+1} failed with error: {str(e)}")
+            if i < len(commands) - 1:
+                continue
+            else:
+                return None
+    
+    return None
+
+def format_duration(seconds):
+    """Formats duration in seconds to a human-readable string."""
+    if not seconds:
+        return "0:00"
+    minutes = int(seconds) // 60
+    seconds = int(seconds) % 60
+    return f"{minutes}:{seconds:02d}"
 
 def process_ytdlp_data(data, original_url):
     """
@@ -236,83 +322,114 @@ def process_ytdlp_data(data, original_url):
         'url': original_url
     }
 
-def format_duration(seconds):
-    """Formats duration in seconds to a human-readable string."""
-    if not seconds:
-        return "0:00"
-    minutes = int(seconds) // 60
-    seconds = int(seconds) % 60
-    return f"{minutes}:{seconds:02d}"
+# API endpoints
+@app.get("/")
+async def root():
+    return {"message": "Twitter Video Downloader API"}
 
-def main():
-    parser = argparse.ArgumentParser(description='Analyze Twitter/X video using yt-dlp')
-    parser.add_argument('--url', required=True, help='Twitter/X URL to analyze')
-    parser.add_argument('--session_id', required=True, help='Session ID for tracking')
+@app.post("/api/twitter-video", response_model=TwitterResponse)
+async def get_twitter_video(request: TwitterRequest, background_tasks: BackgroundTasks):
+    """
+    Process a Twitter/X video URL and return download information.
+    """
+    # Validate URL
+    import re
+    twitter_regex = re.compile(r'^(https?:\/\/)?(www\.)?(twitter\.com|x\.com)\/.+\/status\/(\d+)')
+    if not twitter_regex.match(request.url):
+        raise HTTPException(status_code=400, detail="Invalid Twitter/X URL")
     
-    args = parser.parse_args()
+    # Check cache first
+    cache_key = generate_cache_key(request.url)
+    cached_data = get_from_cache(cache_key)
+    if cached_data:
+        return TwitterResponse(status="success", data=cached_data)
     
-    print(f"Analyzing URL: {args.url} with session: {args.session_id}")
+    # Check if we're at the concurrent request limit
+    if redis_available:
+        try:
+            current_requests = redis_client.incr("current_requests")
+            redis_client.expire("current_requests", 60)  # Expire after 1 minute
+            
+            if current_requests > MAX_CONCURRENT_REQUESTS:
+                redis_client.decr("current_requests")
+                raise HTTPException(
+                    status_code=429, 
+                    detail="Too many concurrent requests. Please try again later."
+                )
+        except:
+            pass
     
-    # Process the video
-    raw_data = get_video_info_with_ytdlp(args.url, args.session_id)
-    
-    # Get the session data
-    with session_lock:
-        session_result = session_data.get(args.session_id, {
-            'status': 'error',
-            'message': 'Unknown error occurred'
-        })
-    
-    if session_result['status'] == 'success':
-        final_result = {
-            'status': 'success',
-            'data': process_ytdlp_data(raw_data, args.url)
-        }
-    elif session_result['status'] == 'no_video':
-        final_result = {
-            'status': 'no_video',
-            'message': session_result['message'],
-            'data': {
-                'title': 'Tweet Content',
-                'description': 'This tweet does not contain a video or GIF.',
-                'thumbnail': None,
-                'duration': '0:00',
-                'author': {
-                    'name': 'Twitter User',
-                    'username': '@user',
-                    'avatar': 'https://picsum.photos/seed/avatar/100/100.jpg'
-                },
-                'formats': [],
-                'hashtags': [],
-                'isGif': False,
-                'views': '0',
-                'uploadDate': '',
-                'url': args.url
+    try:
+        # Process the video
+        raw_data = await get_video_info_with_ytdlp(request.url)
+        
+        # Check if yt-dlp reported no video
+        if raw_data and raw_data.get("no_video"):
+            result_data = {
+                'status': 'no_video',
+                'message': 'This tweet does not contain a video or GIF.',
+                'data': {
+                    'title': 'Tweet Content',
+                    'description': 'This tweet does not contain a video or GIF.',
+                    'thumbnail': None,
+                    'duration': '0:00',
+                    'author': {
+                        'name': 'Twitter User',
+                        'username': '@user',
+                        'avatar': 'https://picsum.photos/seed/avatar/100/100.jpg'
+                    },
+                    'formats': [],
+                    'hashtags': [],
+                    'isGif': False,
+                    'views': '0',
+                    'uploadDate': '',
+                    'url': request.url,
+                    'noVideo': True
+                }
             }
-        }
-    else:
-        final_result = {
-            'status': 'error',
-            'message': session_result['message']
-        }
+        # If yt-dlp fails, return an error
+        elif not raw_data:
+            result_data = {
+                'status': 'error',
+                'message': 'Could not extract video information. The URL may be invalid, private, or the content may not be a video.'
+            }
+        else:
+            # Process the data
+            processed_data = process_ytdlp_data(raw_data, request.url)
+            result_data = {
+                'status': 'success',
+                'data': processed_data
+            }
+            
+            # Cache the successful result
+            if result_data['status'] == 'success':
+                set_in_cache(cache_key, processed_data)
+        
+        return TwitterResponse(**result_data)
+    
+    except Exception as e:
+        print(f"Error processing Twitter video: {str(e)}")
+        raise HTTPException(
+            status_code=500, 
+            detail="Failed to process video. Please try again later."
+        )
+    finally:
+        # Decrement the request counter
+        if redis_available:
+            try:
+                redis_client.decr("current_requests")
+            except:
+                pass
 
-    output_dir = 'artifacts'
-    os.makedirs(output_dir, exist_ok=True)
-    output_file = os.path.join(output_dir, f"twitter_results_{args.session_id}.json")
-    
-    with open(output_file, 'w') as f:
-        json.dump(final_result, f, indent=2)
-    
-    print(f"Results saved to {output_file}")
-    print(f"Status: {final_result.get('status')}")
-    
-    # Clean up session data
-    with session_lock:
-        if args.session_id in session_data:
-            del session_data[args.session_id]
-    
-    if final_result.get('status') != 'success':
-        sys.exit(1)
+@app.get("/api/health")
+async def health_check():
+    """Health check endpoint"""
+    return {
+        "status": "healthy",
+        "timestamp": datetime.now().isoformat(),
+        "redis_available": redis_available,
+        "cache_size": len(memory_cache)
+    }
 
 if __name__ == "__main__":
-    main()
+    uvicorn.run(app, host="0.0.0.0", port=8000)
