@@ -1,57 +1,17 @@
-name: Pinterest Video Downloader
-
-on:
-  workflow_dispatch:
-    inputs:
-      url:
-        description: 'Pinterest URL to analyze'
-        required: true
-      session_id:
-        description: 'Unique session ID for tracking'
-        required: true
-
-jobs:
-  download-video:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-        
-      - name: Set up Python
-        uses: actions/setup-python@v4
-        with:
-          python-version: '3.9'
-          
-      - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install requests==2.31.0 beautifulsoup4==4.12.2 lxml==4.9.3
-          
-      - name: Create artifacts directory
-        run: |
-          mkdir -p artifacts
-          
-      - name: Create session marker
-        run: |
-          echo "Session ${{ github.event.inputs.session_id }}" > artifacts/session-marker-${{ github.event.inputs.session_id }}.txt
-          
-      - name: Analyze Pinterest URL
-        run: |
-          echo "Analyzing Pinterest URL: ${{ github.event.inputs.url }}"
-          echo "Session ID: ${{ github.event.inputs.session_id }}"
-          echo "Output file: artifacts/pinterest_results_${{ github.event.inputs.session_id }}.json"
-          python scripts/pinterest_downloader.py --url "${{ github.event.inputs.url }}" --output artifacts/pinterest_results_${{ github.event.inputs.session_id }}.json
-          
-      - name: Upload session marker
-        uses: actions/upload-artifact@v4
-        with:
-          name: session-marker-${{ github.event.inputs.session_id }}
-          path: artifacts/session-marker-${{ github.event.inputs.session_id }}.txt
-          retention-days: 1
-          
-      - name: Upload results
-        uses: actions/upload-artifact@v4
-        with:
-          name: pinterest-results-${{ github.event.inputs.session_id }}
-          path: artifacts/pinterest_results_${{ github.event.inputs.session_id }}.json
-          retention-days: 1
+const processTwitterResults = (data, originalUrl) => {
+  if (data.status === 'no_video') {
+    // Return a special result for tweets without videos
+    return {
+      ...data.data,
+      url: originalUrl,
+      noVideo: true,
+      message: data.message
+    };
+  }
+  
+  if (data.status !== 'success') {
+    throw new Error(data.message || 'Analysis failed');
+  }
+  
+  return { ...data.data, url: originalUrl };
+};
