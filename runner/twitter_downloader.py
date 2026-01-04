@@ -1,108 +1,20 @@
 import json
 import os
 import sys
-import asyncio
-import aiohttp
-import aiofiles
-from fastapi import FastAPI, HTTPException, BackgroundTasks
-from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
-from typing import Optional, Dict, Any
-import uvicorn
-import redis
+import argparse
 import subprocess
-import time
-from datetime import datetime, timedelta
+import re
+import requests
+from datetime import datetime
+from urllib.parse import urlparse
+from bs4 import BeautifulSoup
 
-# Configuration
-REDIS_URL = os.environ.get("REDIS_URL", "redis://localhost:6379")
-REDIS_TTL = 3600  # 1 hour
-MAX_CONCURRENT_REQUESTS = 50
-REQUEST_TIMEOUT = 60  # seconds
-
-# Initialize FastAPI app
-app = FastAPI(title="Twitter Video Downloader API", version="1.0.0")
-
-# Add CORS middleware
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-# Initialize Redis client
-try:
-    redis_client = redis.from_url(REDIS_URL)
-    redis_client.ping()
-    redis_available = True
-except:
-    redis_available = False
-    print("Redis not available, using in-memory cache")
-
-# In-memory cache fallback
-memory_cache = {}
-
-# Request model
-class TwitterRequest(BaseModel):
-    url: str
-    session_id: str
-
-# Response model
-class TwitterResponse(BaseModel):
-    status: str
-    message: Optional[str] = None
-    data: Optional[Dict[str, Any]] = None
-
-# Helper functions
-def generate_cache_key(url: str) -> str:
-    """Generate a cache key for the given URL"""
-    import hashlib
-    return f"twitter_video:{hashlib.md5(url.encode()).hexdigest()}"
-
-def get_from_cache(cache_key: str) -> Optional[Dict[str, Any]]:
-    """Get data from cache (Redis or in-memory)"""
-    if redis_available:
-        try:
-            data = redis_client.get(cache_key)
-            if data:
-                return json.loads(data)
-        except:
-            pass
-    
-    # Fallback to memory cache
-    if cache_key in memory_cache:
-        cache_entry = memory_cache[cache_key]
-        if time.time() - cache_entry["timestamp"] < REDIS_TTL:
-            return cache_entry["data"]
-        else:
-            del memory_cache[cache_key]
-    
-    return None
-
-def set_in_cache(cache_key: str, data: Dict[str, Any]) -> None:
-    """Set data in cache (Redis or in-memory)"""
-    if redis_available:
-        try:
-            redis_client.setex(cache_key, REDIS_TTL, json.dumps(data))
-            return
-        except:
-            pass
-    
-    # Fallback to memory cache
-    memory_cache[cache_key] = {
-        "data": data,
-        "timestamp": time.time()
-    }
-
-def extract_tweet_id(url: str) -> Optional[str]:
+def extract_tweet_id(url):
     """Extract tweet ID from Twitter/X URL"""
-    import re
     tweet_id_match = re.search(r'(?:twitter\.com|x\.com)/\w+/status/(\d+)', url)
     return tweet_id_match.group(1) if tweet_id_match else None
 
-async def get_video_info_with_ytdlp(url: str) -> Optional[Dict[str, Any]]:
+def get_video_info_with_ytdlp(url):
     """
     Uses yt-dlp with updated authentication methods to extract video information from a Twitter/X URL.
     """
@@ -151,33 +63,19 @@ async def get_video_info_with_ytdlp(url: str) -> Optional[Dict[str, Any]]:
     for i, command in enumerate(commands):
         try:
             print(f"Attempt {i+1} with yt-dlp")
-            # Run the command asynchronously
-            process = await asyncio.create_subprocess_exec(
-                *command,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE
+            result = subprocess.run(
+                command,
+                capture_output=True,
+                text=True,
+                check=True
             )
-            
-            stdout, stderr = await asyncio.wait_for(
-                process.communicate(), 
-                timeout=REQUEST_TIMEOUT
-            )
-            
-            if process.returncode == 0:
-                video_data = json.loads(stdout.decode())
-                return video_data
-            else:
-                error_msg = stderr.decode()
-                print(f"Attempt {i+1} failed with error: {error_msg}")
-                if "No video could be found" in error_msg:
-                    # This means the tweet doesn't contain a video
-                    return {"no_video": True}
-                if i < len(commands) - 1:
-                    continue
-                else:
-                    return None
-        except asyncio.TimeoutError:
-            print(f"Attempt {i+1} timed out")
+            video_data = json.loads(result.stdout)
+            return video_data
+        except subprocess.CalledProcessError as e:
+            print(f"Attempt {i+1} failed with error: {e.stderr}")
+            if "No video could be found" in e.stderr:
+                # This means the tweet doesn't contain a video
+                return {"no_video": True}
             if i < len(commands) - 1:
                 continue
             else:
@@ -188,14 +86,186 @@ async def get_video_info_with_ytdlp(url: str) -> Optional[Dict[str, Any]]:
                 continue
             else:
                 return None
-        except Exception as e:
-            print(f"Attempt {i+1} failed with error: {str(e)}")
-            if i < len(commands) - 1:
-                continue
-            else:
-                return None
-    
-    return None
+
+def get_tweet_info_with_web_scraping(url):
+    """
+    Fallback method using web scraping to get basic tweet information.
+    """
+    try:
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+            'Accept-Language': 'en-US,en;q=0.5',
+            'Accept-Encoding': 'gzip, deflate',
+            'Connection': 'keep-alive',
+            'Upgrade-Insecure-Requests': '1',
+        }
+        
+        response = requests.get(url, headers=headers)
+        
+        if response.status_code == 200:
+            soup = BeautifulSoup(response.text, 'html.parser')
+            
+            # Extract tweet text
+            tweet_text_element = soup.find('div', {'data-testid': 'tweetText'})
+            tweet_text = tweet_text_element.get_text(strip=True) if tweet_text_element else ""
+            
+            # Extract author name
+            author_name_element = soup.find('span', {'data-testid': 'User-Name'})
+            author_name = author_name_element.get_text(strip=True) if author_name_element else ""
+            
+            # Extract author handle
+            author_handle_element = soup.find('span', {'data-testid': 'UserScreenName'})
+            author_handle = author_handle_element.get_text(strip=True) if author_handle_element else ""
+            
+            # Extract images
+            images = []
+            image_elements = soup.find_all('img')
+            for img in image_elements:
+                src = img.get('src', '')
+                alt = img.get('alt', '')
+                if "profile_images" not in src and src.startswith("https://"):
+                    images.append({"url": src, "alt": alt})
+            
+            # Check if there's a video player
+            has_video = bool(soup.find('div', {'data-testid': 'videoPlayer'}))
+            
+            # Try to extract video URLs from script tags
+            video_urls = []
+            script_tags = soup.find_all('script')
+            for script in script_tags:
+                if script.string and 'video_url' in script.string:
+                    # Try to extract video URLs from JavaScript
+                    video_url_matches = re.findall(r'"video_url":"([^"]+)"', script.string)
+                    video_urls.extend(video_url_matches)
+            
+            return {
+                "tweet_text": tweet_text,
+                "author_name": author_name,
+                "author_handle": author_handle,
+                "images": images,
+                "has_video": has_video,
+                "video_urls": video_urls
+            }
+        else:
+            print(f"Web scraping request failed with status: {response.status_code}")
+            return None
+            
+    except Exception as e:
+        print(f"Web scraping method failed with error: {e}")
+        return None
+
+def get_video_info_with_twitter_api(url):
+    """
+    Fallback method using Twitter's public API endpoints.
+    """
+    try:
+        # Extract tweet ID from URL
+        tweet_id = extract_tweet_id(url)
+        if not tweet_id:
+            return None
+        
+        # Use Twitter's GraphQL API (simplified approach)
+        headers = {
+            'Authorization': 'Bearer AAAAAAAAAAAAAAAAAAAAANRILgAAAAAAnNwIzUejRCOuH5E6I8xnZz4puTs%3D1Zv7ttfk8LF81IUq16cHjhLTvJu4FA33AGWWjCpTnA',
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+        }
+        
+        # Try to get tweet details
+        api_url = f"https://api.twitter.com/2/tweets/{tweet_id}?expansions=attachments.media_keys,author_id&media.fields=url,preview_image_url,width,height,type,duration_ms&user.fields=name,username,profile_image_url"
+        
+        response = requests.get(api_url, headers=headers)
+        
+        if response.status_code == 200:
+            data = response.json()
+            return process_twitter_api_data(data, url)
+        else:
+            print(f"Twitter API request failed with status: {response.status_code}")
+            return None
+            
+    except Exception as e:
+        print(f"Twitter API method failed with error: {e}")
+        return None
+
+def process_twitter_api_data(data, original_url):
+    """
+    Process Twitter API response into the format expected by the React component.
+    """
+    try:
+        tweet = data.get('data', {})
+        includes = data.get('includes', {})
+        users = includes.get('users', [])
+        media = includes.get('media', [])
+        
+        # Find the author
+        author_id = tweet.get('author_id')
+        author = next((u for u in users if u.get('id') == author_id), {})
+        
+        # Find media
+        attachments = tweet.get('attachments', {})
+        media_keys = attachments.get('media_keys', [])
+        tweet_media = [m for m in media if m.get('media_key') in media_keys]
+        
+        # Process video media
+        formats = []
+        is_gif = False
+        
+        for m in tweet_media:
+            if m.get('type') == 'video':
+                # Get video info
+                variants = m.get('variants', [])
+                for v in variants:
+                    if v.get('content_type') == 'video/mp4':
+                        bitrate = v.get('bitrate', 0)
+                        quality = 'medium'
+                        if bitrate > 1000000: quality = 'high'
+                        elif bitrate < 500000: quality = 'low'
+                        
+                        formats.append({
+                            'quality': quality,
+                            'resolution': f"{m.get('height', 0)}p",
+                            'size': f"{v.get('bitrate', 0) / 1000:.0f} kbps",
+                            'format': 'mp4',
+                            'url': v.get('url')
+                        })
+            elif m.get('type') == 'animated_gif':
+                is_gif = True
+                variants = m.get('variants', [])
+                for v in variants:
+                    if v.get('content_type') == 'video/mp4':
+                        formats.append({
+                            'quality': 'high',
+                            'resolution': f"{m.get('height', 0)}p",
+                            'size': 'Unknown',
+                            'format': 'mp4',
+                            'url': v.get('url')
+                        })
+        
+        # Get preview image
+        thumbnail = None
+        if tweet_media:
+            thumbnail = tweet_media[0].get('preview_image_url')
+        
+        return {
+            'title': tweet.get('text', '').split('\n')[0][:100],  # First line of tweet, truncated
+            'description': tweet.get('text', ''),
+            'thumbnail': thumbnail,
+            'duration': '0:00',  # Not available from API
+            'author': {
+                'name': author.get('name', 'Twitter User'),
+                'username': f"@{author.get('username', 'user')}",
+                'avatar': author.get('profile_image_url', 'https://picsum.photos/seed/avatar/100/100.jpg')
+            },
+            'formats': formats,
+            'hashtags': [],
+            'isGif': is_gif,
+            'views': '0',  # Not available from API
+            'uploadDate': tweet.get('created_at', ''),
+            'url': original_url
+        }
+    except Exception as e:
+        print(f"Error processing Twitter API data: {e}")
+        return None
 
 def format_duration(seconds):
     """Formats duration in seconds to a human-readable string."""
@@ -219,6 +289,11 @@ def process_ytdlp_data(data, original_url):
             'message': 'This tweet does not contain a video or GIF.'
         }
 
+    print("--- DEBUG: yt-dlp raw data keys ---")
+    print(list(data.keys()))
+    print("--- DEBUG: Checking for direct 'url' key ---")
+    print(f"Direct URL found: {'url' in data}")
+
     formats = []
     is_gif = False
     
@@ -228,6 +303,7 @@ def process_ytdlp_data(data, original_url):
     
     # Check for the main 'url' field
     if data.get('url'):
+        print("--- DEBUG: Using direct URL from yt-dlp ---")
         formats.append({
             'quality': 'high',
             'resolution': f"{data.get('height', 'Unknown')}p",
@@ -238,6 +314,7 @@ def process_ytdlp_data(data, original_url):
 
     # If no direct URL, search the 'formats' list
     if not formats:
+        print("--- DEBUG: Direct URL not found, searching formats list ---")
         sorted_formats = sorted(data.get('formats', []), key=lambda f: f.get('height', 0), reverse=True)
         seen_qualities = set()
         
@@ -263,6 +340,7 @@ def process_ytdlp_data(data, original_url):
 
     # If still no formats, try to extract from requested_formats
     if not formats and 'requested_formats' in data:
+        print("--- DEBUG: No suitable format found, checking requested_formats ---")
         for f in data.get('requested_formats', []):
             if f.get('vcodec') != 'none' and f.get('url'):
                 quality_label = f"{f.get('height', 'unknown')}p"
@@ -281,6 +359,7 @@ def process_ytdlp_data(data, original_url):
 
     # If still no formats, it's likely not a downloadable video
     if not formats:
+        print("--- DEBUG: No suitable video formats found. This might be an image or an unsupported video type. ---")
         # We still return the metadata so the user sees what was analyzed
         return {
             'title': data.get('title', 'Twitter/X Content'),
@@ -322,114 +401,118 @@ def process_ytdlp_data(data, original_url):
         'url': original_url
     }
 
-# API endpoints
-@app.get("/")
-async def root():
-    return {"message": "Twitter Video Downloader API"}
-
-@app.post("/api/twitter-video", response_model=TwitterResponse)
-async def get_twitter_video(request: TwitterRequest, background_tasks: BackgroundTasks):
+def process_web_scraping_data(data, original_url):
     """
-    Process a Twitter/X video URL and return download information.
+    Process web scraping data into the format expected by the React component.
     """
-    # Validate URL
-    import re
-    twitter_regex = re.compile(r'^(https?:\/\/)?(www\.)?(twitter\.com|x\.com)\/.+\/status\/(\d+)')
-    if not twitter_regex.match(request.url):
-        raise HTTPException(status_code=400, detail="Invalid Twitter/X URL")
+    if not data:
+        return None
     
-    # Check cache first
-    cache_key = generate_cache_key(request.url)
-    cached_data = get_from_cache(cache_key)
-    if cached_data:
-        return TwitterResponse(status="success", data=cached_data)
+    # Get the first image as thumbnail if available
+    thumbnail = data.get('images', [{}])[0].get('url') if data.get('images') else None
     
-    # Check if we're at the concurrent request limit
-    if redis_available:
-        try:
-            current_requests = redis_client.incr("current_requests")
-            redis_client.expire("current_requests", 60)  # Expire after 1 minute
-            
-            if current_requests > MAX_CONCURRENT_REQUESTS:
-                redis_client.decr("current_requests")
-                raise HTTPException(
-                    status_code=429, 
-                    detail="Too many concurrent requests. Please try again later."
-                )
-        except:
-            pass
+    # Create formats from video URLs if available
+    formats = []
+    if data.get('video_urls'):
+        for i, video_url in enumerate(data.get('video_urls', [])):
+            formats.append({
+                'quality': 'medium',
+                'resolution': 'Unknown',
+                'size': 'Unknown',
+                'format': 'mp4',
+                'url': video_url
+            })
     
-    try:
-        # Process the video
-        raw_data = await get_video_info_with_ytdlp(request.url)
-        
-        # Check if yt-dlp reported no video
-        if raw_data and raw_data.get("no_video"):
-            result_data = {
-                'status': 'no_video',
-                'message': 'This tweet does not contain a video or GIF.',
-                'data': {
-                    'title': 'Tweet Content',
-                    'description': 'This tweet does not contain a video or GIF.',
-                    'thumbnail': None,
-                    'duration': '0:00',
-                    'author': {
-                        'name': 'Twitter User',
-                        'username': '@user',
-                        'avatar': 'https://picsum.photos/seed/avatar/100/100.jpg'
-                    },
-                    'formats': [],
-                    'hashtags': [],
-                    'isGif': False,
-                    'views': '0',
-                    'uploadDate': '',
-                    'url': request.url,
-                    'noVideo': True
-                }
-            }
-        # If yt-dlp fails, return an error
-        elif not raw_data:
-            result_data = {
-                'status': 'error',
-                'message': 'Could not extract video information. The URL may be invalid, private, or the content may not be a video.'
-            }
-        else:
-            # Process the data
-            processed_data = process_ytdlp_data(raw_data, request.url)
-            result_data = {
-                'status': 'success',
-                'data': processed_data
-            }
-            
-            # Cache the successful result
-            if result_data['status'] == 'success':
-                set_in_cache(cache_key, processed_data)
-        
-        return TwitterResponse(**result_data)
-    
-    except Exception as e:
-        print(f"Error processing Twitter video: {str(e)}")
-        raise HTTPException(
-            status_code=500, 
-            detail="Failed to process video. Please try again later."
-        )
-    finally:
-        # Decrement the request counter
-        if redis_available:
-            try:
-                redis_client.decr("current_requests")
-            except:
-                pass
-
-@app.get("/api/health")
-async def health_check():
-    """Health check endpoint"""
     return {
-        "status": "healthy",
-        "timestamp": datetime.now().isoformat(),
-        "redis_available": redis_available,
-        "cache_size": len(memory_cache)
+        'title': data.get('tweet_text', '').split('\n')[0][:100],  # First line of tweet, truncated
+        'description': data.get('tweet_text', ''),
+        'thumbnail': thumbnail,
+        'duration': '0:00',
+        'author': {
+            'name': data.get('author_name', 'Twitter User'),
+            'username': data.get('author_handle', '@user'),
+            'avatar': 'https://picsum.photos/seed/avatar/100/100.jpg'
+        },
+        'formats': formats,  # Will be populated if video URLs are found
+        'hashtags': [],
+        'isGif': False,
+        'views': '0',
+        'uploadDate': '',
+        'url': original_url,
+        'has_video': data.get('has_video', False),
+        'images': data.get('images', [])
     }
 
+def main():
+    parser = argparse.ArgumentParser(description='Analyze Twitter/X video using yt-dlp')
+    parser.add_argument('--url', required=True, help='Twitter/X URL to analyze')
+    parser.add_argument('--session_id', required=True, help='Session ID for tracking')
+    
+    args = parser.parse_args()
+    
+    print(f"Analyzing URL: {args.url}")
+    
+    # Try yt-dlp first with multiple approaches
+    raw_data = get_video_info_with_ytdlp(args.url)
+    
+    # Check if yt-dlp reported no video
+    if raw_data and raw_data.get("no_video"):
+        final_result = {
+            'status': 'no_video',
+            'message': 'This tweet does not contain a video or GIF.',
+            'data': process_web_scraping_data(get_tweet_info_with_web_scraping(args.url), args.url)
+        }
+    # If yt-dlp fails, try Twitter API
+    elif not raw_data:
+        print("yt-dlp failed, trying Twitter API fallback")
+        api_data = get_video_info_with_twitter_api(args.url)
+        
+        if api_data:
+            final_result = {
+                'status': 'success',
+                'data': api_data
+            }
+        else:
+            print("Twitter API failed, trying web scraping")
+            scrape_data = get_tweet_info_with_web_scraping(args.url)
+            
+            if scrape_data:
+                final_result = {
+                    'status': 'no_video',
+                    'message': 'Could not extract video information. This tweet may not contain a video or GIF, or the content may be private.',
+                    'data': process_web_scraping_data(scrape_data, args.url)
+                }
+            else:
+                final_result = {
+                    'status': 'error',
+                    'message': 'Could not extract video information. The URL may be invalid, private, or the content may not be a video. Twitter/X has recently changed their API, which may be causing this issue.'
+                }
+    else:
+        final_result = {
+            'status': 'success',
+            'data': process_ytdlp_data(raw_data, args.url)
+        }
+
+    output_dir = 'artifacts'
+    os.makedirs(output_dir, exist_ok=True)
+    output_file = os.path.join(output_dir, f"twitter_results_{args.session_id}.json")
+    
+    with open(output_file, 'w') as f:
+        json.dump(final_result, f, indent=2)
+    
+    print(f"Results saved to {output_file}")
+    if final_result.get('status') == 'success':
+        print("Successfully processed content.")
+    elif final_result.get('status') == 'no_video':
+        print("Tweet processed, but no video/GIF found.")
+    else:
+        print("Processing failed.")
+        sys.exit(1)
+
 if __name__ == "__main__":
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    main()
+
+
+
+
+
