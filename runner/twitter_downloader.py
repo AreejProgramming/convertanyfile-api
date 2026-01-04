@@ -1,4 +1,3 @@
-
 import json
 import os
 import sys
@@ -39,7 +38,19 @@ def get_video_info_with_ytdlp(url):
             '--add-header', 'User-Agent:Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
             url
         ],
-        # Third attempt: basic approach
+        # Third attempt: with additional headers
+        [
+            'yt-dlp',
+            '--no-warnings',
+            '--simulate',
+            '--print-json',
+            '--add-header', 'Authorization:Bearer AAAAAAAAAAAAAAAAAAAAANRILgAAAAAAnNwIzUejRCOuH5E6I8xnZz4puTs%3D1Zv7ttfk8LF81IUq16cHjhLTvJu4FA33AGWWjCpTnA',
+            '--add-header', 'User-Agent:Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+            '--add-header', 'Accept-Language:en-US,en;q=0.9',
+            '--add-header', 'Referer:https://twitter.com/',
+            url
+        ],
+        # Fourth attempt: basic approach
         [
             'yt-dlp',
             '--no-warnings',
@@ -82,7 +93,12 @@ def get_tweet_info_with_web_scraping(url):
     """
     try:
         headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+            'Accept-Language': 'en-US,en;q=0.5',
+            'Accept-Encoding': 'gzip, deflate',
+            'Connection': 'keep-alive',
+            'Upgrade-Insecure-Requests': '1',
         }
         
         response = requests.get(url, headers=headers)
@@ -114,12 +130,22 @@ def get_tweet_info_with_web_scraping(url):
             # Check if there's a video player
             has_video = bool(soup.find('div', {'data-testid': 'videoPlayer'}))
             
+            # Try to extract video URLs from script tags
+            video_urls = []
+            script_tags = soup.find_all('script')
+            for script in script_tags:
+                if script.string and 'video_url' in script.string:
+                    # Try to extract video URLs from JavaScript
+                    video_url_matches = re.findall(r'"video_url":"([^"]+)"', script.string)
+                    video_urls.extend(video_url_matches)
+            
             return {
                 "tweet_text": tweet_text,
                 "author_name": author_name,
                 "author_handle": author_handle,
                 "images": images,
-                "has_video": has_video
+                "has_video": has_video,
+                "video_urls": video_urls
             }
         else:
             print(f"Web scraping request failed with status: {response.status_code}")
@@ -312,6 +338,25 @@ def process_ytdlp_data(data, original_url):
                     # We only need one format from this method to provide a download button
                     break 
 
+    # If still no formats, try to extract from requested_formats
+    if not formats and 'requested_formats' in data:
+        print("--- DEBUG: No suitable format found, checking requested_formats ---")
+        for f in data.get('requested_formats', []):
+            if f.get('vcodec') != 'none' and f.get('url'):
+                quality_label = f"{f.get('height', 'unknown')}p"
+                quality = 'high'
+                if f.get('height', 1080) <= 480: quality = 'low'
+                elif f.get('height', 1080) <= 720: quality = 'medium'
+
+                formats.append({
+                    'quality': quality,
+                    'resolution': quality_label,
+                    'size': f"{f.get('filesize_approx', 0) / (1024*1024):.1f} MB" if f.get('filesize_approx') else 'Unknown MB',
+                    'format': f.get('ext', 'mp4'),
+                    'url': f.get('url')
+                })
+                break
+
     # If still no formats, it's likely not a downloadable video
     if not formats:
         print("--- DEBUG: No suitable video formats found. This might be an image or an unsupported video type. ---")
@@ -366,6 +411,18 @@ def process_web_scraping_data(data, original_url):
     # Get the first image as thumbnail if available
     thumbnail = data.get('images', [{}])[0].get('url') if data.get('images') else None
     
+    # Create formats from video URLs if available
+    formats = []
+    if data.get('video_urls'):
+        for i, video_url in enumerate(data.get('video_urls', [])):
+            formats.append({
+                'quality': 'medium',
+                'resolution': 'Unknown',
+                'size': 'Unknown',
+                'format': 'mp4',
+                'url': video_url
+            })
+    
     return {
         'title': data.get('tweet_text', '').split('\n')[0][:100],  # First line of tweet, truncated
         'description': data.get('tweet_text', ''),
@@ -376,7 +433,7 @@ def process_web_scraping_data(data, original_url):
             'username': data.get('author_handle', '@user'),
             'avatar': 'https://picsum.photos/seed/avatar/100/100.jpg'
         },
-        'formats': [],  # No download formats available from web scraping
+        'formats': formats,  # Will be populated if video URLs are found
         'hashtags': [],
         'isGif': False,
         'views': '0',
