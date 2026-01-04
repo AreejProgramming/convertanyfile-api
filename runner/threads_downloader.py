@@ -12,6 +12,9 @@ from bs4 import BeautifulSoup
 import concurrent.futures
 import threading
 import time
+import base64
+import hashlib
+import hmac
 
 # Thread-safe cache for storing video information
 video_cache = {}
@@ -33,6 +36,236 @@ def extract_post_id(url):
             return match.group(2) if len(match.groups()) > 1 else match.group(1)
     
     return None
+
+def get_direct_video_info(url):
+    """
+    Direct approach to extract video information from Threads URLs.
+    This method bypasses yt-dlp and directly extracts video URLs from the page.
+    """
+    try:
+        print("Attempting direct video extraction...")
+        
+        # First, get the page content
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 16_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.6 Mobile/15E148 Safari/604.1',
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+            'Accept-Language': 'en-US,en;q=0.5',
+            'Accept-Encoding': 'gzip, deflate',
+            'Connection': 'keep-alive',
+            'Upgrade-Insecure-Requests': '1',
+            'Sec-Fetch-Dest': 'document',
+            'Sec-Fetch-Mode': 'navigate',
+            'Sec-Fetch-Site': 'none',
+            'Cache-Control': 'max-age=0'
+        }
+        
+        response = requests.get(url, headers=headers, timeout=10)
+        
+        if response.status_code != 200:
+            print(f"Failed to fetch page: {response.status_code}")
+            return None
+            
+        html_content = response.text
+        soup = BeautifulSoup(html_content, 'html.parser')
+        
+        # Extract basic post information
+        title_element = soup.find('meta', property='og:title')
+        title = title_element.get('content', '') if title_element else ''
+        
+        description_element = soup.find('meta', property='og:description')
+        description = description_element.get('content', '') if description_element else ''
+        
+        image_element = soup.find('meta', property='og:image')
+        thumbnail = image_element.get('content', '') if image_element else ''
+        
+        # Extract author information
+        author_element = soup.find('meta', property='og:site_name')
+        author_name = author_element.get('content', 'Threads User') if author_element else 'Threads User'
+        
+        # Try to find video URLs in script tags
+        video_urls = []
+        
+        # Method 1: Look for video URLs in script tags
+        script_tags = soup.find_all('script')
+        for script in script_tags:
+            if script.string:
+                # Look for video URLs in various patterns
+                video_url_patterns = [
+                    r'"video_url":"([^"]+)"',
+                    r'"url":"([^"]+\.mp4[^"]*)"',
+                    r'"src":"([^"]+\.mp4[^"]*)"',
+                    r'contentUrl":"([^"]+\.mp4[^"]*)"',
+                    r'"url":"([^"]+\.m3u8[^"]*)"',
+                    r'"src":"([^"]+\.m3u8[^"]*)"'
+                ]
+                
+                for pattern in video_url_patterns:
+                    matches = re.findall(pattern, script.string)
+                    video_urls.extend(matches)
+        
+        # Method 2: Look for JSON-LD structured data
+        json_ld_scripts = soup.find_all('script', type='application/ld+json')
+        for script in json_ld_scripts:
+            try:
+                data = json.loads(script.string)
+                if isinstance(data, list):
+                    data = data[0]
+                
+                # Check if it's a video object
+                if data.get('@type') == 'VideoObject':
+                    video_url = data.get('contentUrl') or data.get('url')
+                    if video_url:
+                        video_urls.append(video_url)
+                
+                # Check for embedded video
+                if 'video' in data:
+                    video_data = data['video']
+                    if isinstance(video_data, dict):
+                        video_url = video_data.get('contentUrl') or video_data.get('url')
+                        if video_url:
+                            video_urls.append(video_url)
+            except:
+                pass
+        
+        # Method 3: Look for meta tags with video URLs
+        video_meta_tags = [
+            soup.find('meta', property='og:video'),
+            soup.find('meta', property='og:video:url'),
+            soup.find('meta', name='twitter:player:stream')
+        ]
+        
+        for meta_tag in video_meta_tags:
+            if meta_tag and meta_tag.get('content'):
+                video_urls.append(meta_tag.get('content'))
+        
+        # Method 4: Look for video elements
+        video_elements = soup.find_all('video')
+        for video_element in video_elements:
+            src = video_element.get('src')
+            if src:
+                video_urls.append(src)
+            
+            # Check source elements within video
+            source_elements = video_element.find_all('source')
+            for source_element in source_elements:
+                src = source_element.get('src')
+                if src:
+                    video_urls.append(src)
+        
+        # Method 5: Look for iframe elements with video sources
+        iframe_elements = soup.find_all('iframe')
+        for iframe_element in iframe_elements:
+            src = iframe_element.get('src')
+            if src and ('video' in src or 'player' in src):
+                video_urls.append(src)
+        
+        # Method 6: Look for links to video files in the HTML
+        video_link_patterns = [
+            r'href="([^"]+\.mp4[^"]*)"',
+            r'href="([^"]+\.m3u8[^"]*)"'
+        ]
+        
+        for pattern in video_link_patterns:
+            matches = re.findall(pattern, html_content)
+            video_urls.extend(matches)
+        
+        # Clean and deduplicate video URLs
+        clean_video_urls = []
+        seen_urls = set()
+        
+        for video_url in video_urls:
+            # Skip empty URLs
+            if not video_url or video_url.strip() == '':
+                continue
+                
+            # Clean the URL
+            video_url = video_url.strip().replace('\\/', '/')
+            
+            # Skip if we've already seen this URL
+            if video_url in seen_urls:
+                continue
+                
+            # Skip URLs that are clearly not video files
+            if not any(ext in video_url.lower() for ext in ['.mp4', '.m3u8', '.mov', '.webm']):
+                continue
+                
+            seen_urls.add(video_url)
+            clean_video_urls.append(video_url)
+        
+        # If we found video URLs, return the information
+        if clean_video_urls:
+            # Create format objects for each video URL
+            formats = []
+            
+            for i, video_url in enumerate(clean_video_urls):
+                # Try to determine quality from URL
+                quality = 'medium'
+                resolution = 'Unknown'
+                
+                if '1080' in video_url or 'high' in video_url.lower():
+                    quality = 'high'
+                    resolution = '1080p'
+                elif '720' in video_url or 'medium' in video_url.lower():
+                    quality = 'medium'
+                    resolution = '720p'
+                elif '480' in video_url or 'low' in video_url.lower():
+                    quality = 'low'
+                    resolution = '480p'
+                
+                formats.append({
+                    'quality': quality,
+                    'resolution': resolution,
+                    'size': 'Unknown',
+                    'format': 'mp4',
+                    'url': video_url
+                })
+            
+            return {
+                'title': title,
+                'description': description,
+                'thumbnail': thumbnail,
+                'duration': '0:00',
+                'author': {
+                    'name': author_name,
+                    'username': '@threadsuser',
+                    'avatar': 'https://picsum.photos/seed/avatar/100/100.jpg'
+                },
+                'formats': formats,
+                'hashtags': [],
+                'isGif': False,
+                'views': '0',
+                'uploadDate': datetime.now().strftime('%Y-%m-%d'),
+                'url': url
+            }
+        
+        # If we didn't find video URLs, but we found a thumbnail, it might be an image post
+        if thumbnail and not clean_video_urls:
+            return {
+                'title': title,
+                'description': description,
+                'thumbnail': thumbnail,
+                'duration': '0:00',
+                'author': {
+                    'name': author_name,
+                    'username': '@threadsuser',
+                    'avatar': 'https://picsum.photos/seed/avatar/100/100.jpg'
+                },
+                'formats': [],  # No video formats
+                'hashtags': [],
+                'isGif': False,
+                'views': '0',
+                'uploadDate': datetime.now().strftime('%Y-%m-%d'),
+                'url': url,
+                'no_video': True,
+                'message': 'This post contains images but no video.'
+            }
+        
+        # If we couldn't find any content
+        return None
+        
+    except Exception as e:
+        print(f"Direct video extraction failed: {e}")
+        return None
 
 def get_video_info_with_ytdlp(url):
     """
@@ -505,7 +738,18 @@ def process_url(url, session_id):
         print(f"Using cached result for {url}")
         return cached_result
     
-    # Try yt-dlp first with multiple approaches
+    # Try direct video extraction first (new approach)
+    direct_data = get_direct_video_info(url)
+    if direct_data:
+        print("Direct video extraction succeeded")
+        final_result = {
+            'status': 'success',
+            'data': direct_data
+        }
+        cache_video_info(url, final_result)
+        return final_result
+    
+    # If direct extraction fails, try yt-dlp
     raw_data = get_video_info_with_ytdlp(url)
     
     # Check if yt-dlp reported no video
