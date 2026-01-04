@@ -7,7 +7,7 @@ import subprocess
 import re
 import requests
 from datetime import datetime
-from urllib.parse import urlparse
+from urllib.parse import urlparse, parse_qs
 from bs4 import BeautifulSoup
 import concurrent.futures
 import threading
@@ -19,8 +19,20 @@ cache_lock = threading.Lock()
 
 def extract_post_id(url):
     """Extract post ID from Threads URL"""
-    post_id_match = re.search(r'(?:threads\.net)\/.+/post\/(\w+)', url)
-    return post_id_match.group(1) if post_id_match else None
+    # Handle different Threads URL formats
+    patterns = [
+        r'(?:threads\.net)\/.+/post\/(\w+)',
+        r'(?:threads\.net)\/t\/(\w+)',  # Short URL format
+        r'(?:threads\.net)\/@([\w\.]+)\/post\/(\w+)'  # Full format with username
+    ]
+    
+    for pattern in patterns:
+        match = re.search(pattern, url)
+        if match:
+            # For patterns with username, return the post ID (second group)
+            return match.group(2) if len(match.groups()) > 1 else match.group(1)
+    
+    return None
 
 def get_video_info_with_ytdlp(url):
     """
@@ -37,18 +49,31 @@ def get_video_info_with_ytdlp(url):
             '--add-header', 'User-Agent:Mozilla/5.0 (iPhone; CPU iPhone OS 16_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.6 Mobile/15E148 Safari/604.1',
             '--add-header', 'Accept-Language:en-US,en;q=0.9',
             '--add-header', 'Referer:https://www.threads.net/',
+            '--extractor-args', 'instagram:api=mobile',
             url
         ],
-        # Second attempt: with desktop user agent
+        # Second attempt: with desktop user agent and different API
         [
             'yt-dlp',
             '--no-warnings',
             '--simulate',
             '--print-json',
             '--add-header', 'User-Agent:Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+            '--extractor-args', 'instagram:api=desktop',
             url
         ],
-        # Third attempt: basic approach
+        # Third attempt: with cookies approach
+        [
+            'yt-dlp',
+            '--no-warnings',
+            '--simulate',
+            '--print-json',
+            '--add-header', 'User-Agent:Mozilla/5.0 (iPhone; CPU iPhone OS 16_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.6 Mobile/15E148 Safari/604.1',
+            '--extractor-args', 'instagram:api=mobile',
+            '--cookies', '/dev/null',  # This tells yt-dlp to use its own cookies
+            url
+        ],
+        # Fourth attempt: basic approach
         [
             'yt-dlp',
             '--no-warnings',
@@ -144,6 +169,16 @@ def get_post_info_with_web_scraping(url):
                     video_url_matches = re.findall(r'"video_url":"([^"]+)"', script.string)
                     video_urls.extend(video_url_matches)
             
+            # Try to extract from Instagram's JSON data
+            json_scripts = soup.find_all('script', type='application/ld+json')
+            for script in json_scripts:
+                try:
+                    data = json.loads(script.string)
+                    if 'video' in data:
+                        video_urls.append(data['video']['contentUrl'])
+                except:
+                    pass
+            
             return {
                 "post_text": post_text,
                 "author_name": author_name,
@@ -160,9 +195,9 @@ def get_post_info_with_web_scraping(url):
         print(f"Web scraping method failed with error: {e}")
         return None
 
-def get_video_info_with_threads_api(url):
+def get_video_info_with_instagram_api(url):
     """
-    Fallback method using Threads' public API endpoints.
+    Fallback method using Instagram's API endpoints (Threads is part of Instagram).
     """
     try:
         # Extract post ID from URL
@@ -170,81 +205,92 @@ def get_video_info_with_threads_api(url):
         if not post_id:
             return None
         
-        # Use Threads' GraphQL API (simplified approach)
+        # Use Instagram's API (simplified approach)
         headers = {
             'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 16_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.6 Mobile/15E148 Safari/604.1'
         }
         
         # Try to get post details
-        api_url = f"https://www.threads.net/api/v1/post/{post_id}"
+        api_url = f"https://www.instagram.com/api/v1/media/{post_id}/info/"
         
         response = requests.get(api_url, headers=headers, timeout=10)
         
         if response.status_code == 200:
             data = response.json()
-            return process_threads_api_data(data, url)
+            return process_instagram_api_data(data, url)
         else:
-            print(f"Threads API request failed with status: {response.status_code}")
+            print(f"Instagram API request failed with status: {response.status_code}")
             return None
             
     except Exception as e:
-        print(f"Threads API method failed with error: {e}")
+        print(f"Instagram API method failed with error: {e}")
         return None
 
-def process_threads_api_data(data, original_url):
+def process_instagram_api_data(data, original_url):
     """
-    Process Threads API response into the format expected by the React component.
+    Process Instagram API response into the format expected by the React component.
     """
     try:
-        post = data.get('data', {})
-        user = post.get('user', {})
-        media = post.get('media', [])
+        items = data.get('items', [])
+        if not items:
+            return None
+            
+        item = items[0]
+        user = item.get('user', {})
+        carousel_media = item.get('carousel_media', [])
         
         # Process video media
         formats = []
         is_gif = False
         
-        for m in media:
-            if m.get('type') == 'video':
-                # Get video info
-                variants = m.get('variants', [])
-                for v in variants:
-                    if v.get('content_type') == 'video/mp4':
-                        bitrate = v.get('bitrate', 0)
-                        quality = 'medium'
-                        if bitrate > 1000000: quality = 'high'
-                        elif bitrate < 500000: quality = 'low'
-                        
-                        formats.append({
-                            'quality': quality,
-                            'resolution': f"{m.get('height', 0)}p",
-                            'size': f"{v.get('bitrate', 0) / 1000:.0f} kbps",
-                            'format': 'mp4',
-                            'url': v.get('url')
-                        })
-            elif m.get('type') == 'animated_gif':
-                is_gif = True
-                variants = m.get('variants', [])
-                for v in variants:
-                    if v.get('content_type') == 'video/mp4':
-                        formats.append({
-                            'quality': 'high',
-                            'resolution': f"{m.get('height', 0)}p",
-                            'size': 'Unknown',
-                            'format': 'mp4',
-                            'url': v.get('url')
-                        })
+        # Check if it's a carousel or single media
+        media_list = carousel_media if carousel_media else [item]
+        
+        for media in media_list:
+            if media.get('media_type') == 2:  # Video
+                video_versions = media.get('video_versions', [])
+                for v in video_versions:
+                    quality = 'high'
+                    if v.get('height', 1080) <= 480: quality = 'low'
+                    elif v.get('height', 1080) <= 720: quality = 'medium'
+                    
+                    formats.append({
+                        'quality': quality,
+                        'resolution': f"{v.get('height', 0)}p",
+                        'size': f"{v.get('width', 0)}x{v.get('height', 0)}",
+                        'format': 'mp4',
+                        'url': v.get('url')
+                    })
+            elif media.get('media_type') == 8:  # Carousel
+                # Process each item in carousel
+                for carousel_item in media.get('carousel_media', []):
+                    if carousel_item.get('media_type') == 2:  # Video
+                        video_versions = carousel_item.get('video_versions', [])
+                        for v in video_versions:
+                            quality = 'high'
+                            if v.get('height', 1080) <= 480: quality = 'low'
+                            elif v.get('height', 1080) <= 720: quality = 'medium'
+                            
+                            formats.append({
+                                'quality': quality,
+                                'resolution': f"{v.get('height', 0)}p",
+                                'size': f"{v.get('width', 0)}x{v.get('height', 0)}",
+                                'format': 'mp4',
+                                'url': v.get('url')
+                            })
         
         # Get preview image
         thumbnail = None
-        if media:
-            thumbnail = media[0].get('image_versions2', {}).get('candidates', [{}])[0].get('url')
+        if carousel_media:
+            thumbnail = carousel_media[0].get('image_versions2', {}).get('candidates', [{}])[0].get('url')
+        elif item.get('image_versions2'):
+            thumbnail = item.get('image_versions2', {}).get('candidates', [{}])[0].get('url')
         
         return {
-            'title': post.get('caption', '').split('\n')[0][:100],  # First line of caption, truncated
-            'description': post.get('caption', ''),
+            'title': item.get('caption', {}).get('text', '').split('\n')[0][:100],  # First line of caption, truncated
+            'description': item.get('caption', {}).get('text', ''),
             'thumbnail': thumbnail,
-            'duration': '0:00',  # Not available from API
+            'duration': f"{item.get('video_duration', 0):.0f}" if item.get('video_duration') else '0:00',
             'author': {
                 'name': user.get('full_name', 'Threads User'),
                 'username': f"@{user.get('username', 'user')}",
@@ -254,20 +300,30 @@ def process_threads_api_data(data, original_url):
             'hashtags': [],
             'isGif': is_gif,
             'views': '0',  # Not available from API
-            'uploadDate': post.get('taken_at', ''),
+            'uploadDate': datetime.fromtimestamp(item.get('taken_at', 0)).strftime('%Y-%m-%d') if item.get('taken_at') else '',
             'url': original_url
         }
     except Exception as e:
-        print(f"Error processing Threads API data: {e}")
+        print(f"Error processing Instagram API data: {e}")
         return None
 
 def format_duration(seconds):
     """Formats duration in seconds to a human-readable string."""
     if not seconds:
         return "0:00"
-    minutes = int(seconds) // 60
-    seconds = int(seconds) % 60
-    return f"{minutes}:{seconds:02d}"
+    
+    # If it's already formatted, return as is
+    if isinstance(seconds, str) and ':' in seconds:
+        return seconds
+    
+    # If it's a number, convert to MM:SS or HH:MM:SS format
+    try:
+        seconds_float = float(seconds)
+        minutes = int(seconds_float) // 60
+        seconds_int = int(seconds_float) % 60
+        return f"{minutes}:{seconds_int:02d}"
+    except:
+        return "0:00"
 
 def process_ytdlp_data(data, original_url):
     """
@@ -459,10 +515,10 @@ def process_url(url, session_id):
             'message': 'This post does not contain a video or GIF.',
             'data': process_web_scraping_data(get_post_info_with_web_scraping(url), url)
         }
-    # If yt-dlp fails, try Threads API
+    # If yt-dlp fails, try Instagram API
     elif not raw_data:
-        print("yt-dlp failed, trying Threads API fallback")
-        api_data = get_video_info_with_threads_api(url)
+        print("yt-dlp failed, trying Instagram API fallback")
+        api_data = get_video_info_with_instagram_api(url)
         
         if api_data:
             final_result = {
@@ -470,7 +526,7 @@ def process_url(url, session_id):
                 'data': api_data
             }
         else:
-            print("Threads API failed, trying web scraping")
+            print("Instagram API failed, trying web scraping")
             scrape_data = get_post_info_with_web_scraping(url)
             
             if scrape_data:
